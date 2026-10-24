@@ -1,10 +1,25 @@
-# Dropship Studio
+﻿# Dropship Studio
 
-Dropship Studio là ứng dụng Windows local để nghiên cứu chủ đề, tạo video AI, dựng timeline và chuẩn bị bài đăng cho Facebook Page.
+Dropship Studio is a Windows desktop app for research, AI video production, timeline editing, Facebook Page management, post planning and Meta publishing preparation.
 
-## Chạy từ source
+## Download for Windows
 
-Yêu cầu Node.js 22 và FFmpeg/ffprobe có trong `bin/` hoặc trên `PATH`.
+- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.0/Dropship.Studio.Setup.0.1.0.exe) — install to Windows and create the Desktop shortcut.
+- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.0/Dropship.Studio.0.1.0.exe) — run directly without installation.
+- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.0/SHA256SUMS.txt)
+
+The desktop app starts with a version/loading screen, uses the Dropship Studio icon, and stores user data in `Dropship Data` beside the portable executable or inside the installed application directory.
+
+## Included features
+
+- Page overview with Page selection, Meta connection/token status and Page management.
+- Post management with create, edit, approve, schedule, preview, duplicate and export actions.
+- OpenAI-compatible LLM endpoint settings, including local Ollama and LM Studio endpoints.
+- Research feed, AI video generation providers, timeline editing and Windows packaging.
+
+## Run from source
+
+Requires Node.js 22 and FFmpeg/ffprobe from `bin/` or `PATH`.
 
 ```powershell
 npm ci
@@ -12,33 +27,17 @@ npm run build
 npm run desktop
 ```
 
-Ứng dụng mở một cửa sổ Electron, tự khởi động server local và hiển thị màn hình loading trước khi giao diện sẵn sàng. Dữ liệu người dùng nằm trong thư mục `Dropship Data` cạnh file EXE khi chạy bản portable.
-
-## Tạo file EXE Windows
+## Build Windows artifacts
 
 ```powershell
 npm ci
-npm run pack:portable
-npm run pack:installer
-```
-
-Các file phát hành được ghi vào `release/`. Bản installer có thể bấm để cài; bản portable có thể bấm chạy trực tiếp. Cả hai đều dùng icon Dropship Studio được cấu hình trong `build/icon.ico`.
-
-Trước khi phát hành, chạy:
-
-```powershell
 npm test
 npm run build
-npm run test:ui
+npm run pack:release
 ```
 
-## GitHub Releases
+Build outputs are written to `release/`. The installer and portable executable use the icon in `build/icon.ico`. Runtime data, browser profiles, tokens and secrets are excluded from the repository.
 
-Workflow `.github/workflows/release.yml` tạo bản Windows khi đẩy tag dạng `v*` hoặc khi chạy thủ công từ Actions. Workflow chỉ đóng gói và tạo GitHub Release; nó không chứa tài khoản AI, cookie, Meta token hay dữ liệu trong `.studio/`.
+## Repository
 
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Repository URL và quyền `contents: write` phải được cấu hình ở GitHub trước khi dùng workflow phát hành. Không commit `release/`, `.studio/`, profile trình duyệt, media hoặc secrets.
+This repository is the dedicated Dropship Studio project. The Windows v0.1.0 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.1.0).
