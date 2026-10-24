@@ -1,0 +1,50 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tests and web build
+        run: |
+          npm test
+          npm run build
+
+      - name: Build Windows artifacts
+        run: npm run pack:release
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropship-studio-windows
+          path: release/*.exe
+          if-no-files-found: error
+
+      - name: Create GitHub Release for a tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -LiteralPath release -Filter *.exe | ForEach-Object { $_.FullName }
+          gh release create $env:GITHUB_REF_NAME $files --title "Dropship Studio $env:GITHUB_REF_NAME" --generate-notes

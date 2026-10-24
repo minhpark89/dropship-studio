@@ -1,0 +1,17 @@
+node_modules/
+.studio/
+.verification/
+release/
+dist/
+*.log
+*.tmp
+*.bak
+
+# Keep only the source icon assets used by electron-builder.
+build/*
+!build/icon.ico
+!build/icon.png
+
+__pycache__/
+*.pyc
+

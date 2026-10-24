@@ -1,0 +1,105 @@
+.research-page {
+  --research-ink: #182322;
+  --research-muted: #6f7c79;
+  --research-line: #dfe7e3;
+  --research-soft: #f3f7f5;
+  --research-accent: #157f69;
+  --research-accent-soft: #e6f4ef;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-bottom: 60px;
+}
+.research-heading { align-items: flex-end; }
+.research-heading h1 { max-width: 720px; }
+.research-heading-mark { display: flex; align-items: center; gap: 9px; padding: 10px 13px; color: var(--research-accent); background: var(--research-accent-soft); border: 1px solid #cce9df; border-radius: 12px; font-size: 12px; font-weight: 700; }
+.research-heading-mark svg { stroke-width: 1.8; }
+.research-primary-tabs { display: flex; gap: 8px; margin: 4px 0 20px; padding: 5px; background: #edf3f0; border-radius: 12px; width: fit-content; }
+.research-tabs button { border: 0; cursor: pointer; color: var(--research-muted); background: transparent; font: inherit; }
+.research-primary-tabs button { display: inline-flex; align-items: center; gap: 7px; padding: 10px 15px; border-radius: 8px; font-size: 13px; font-weight: 700; }
+.research-tabs button.active { color: var(--research-ink); background: #fff; box-shadow: 0 2px 7px #12241b12; }
+.research-card { margin-bottom: 22px; padding: 23px; border: 1px solid var(--research-line); border-radius: 16px; background: #fff; box-shadow: 0 8px 28px #15382b08; }
+.research-card-heading { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.research-card-heading h2 { display: flex; align-items: center; gap: 8px; margin: 5px 0 6px; color: var(--research-ink); font-size: 18px; }
+.research-card-heading p { max-width: 650px; margin: 0; color: var(--research-muted); font-size: 13px; line-height: 1.55; }
+.research-kicker { color: #81918c; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.research-step, .research-safe-pill { display: inline-flex; align-items: center; gap: 8px; height: fit-content; padding: 7px 10px; color: var(--research-accent); border: 1px solid #cce9df; border-radius: 999px; background: var(--research-accent-soft); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.research-step span { display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; color: #fff; background: var(--research-accent); letter-spacing: 0; }
+.research-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+.research-form .field, .llm-card .field, .dreamface-login .field { margin-bottom: 14px; }
+.research-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-top: 7px; padding-top: 15px; border-top: 1px solid var(--research-line); color: var(--research-muted); font-size: 11px; }
+.research-form-actions > span { display: inline-flex; align-items: center; gap: 6px; }
+.research-form-actions svg { color: var(--research-accent); }
+.research-check { display: flex; align-items: center; gap: 9px; color: var(--research-muted); font-size: 12px; cursor: pointer; }
+.research-check input { position: absolute; opacity: 0; pointer-events: none; }
+.research-check span { width: 17px; height: 17px; border: 1px solid #b8c9c2; border-radius: 5px; background: #fff; }
+.research-check input:checked + span { border-color: var(--research-accent); background: var(--research-accent); box-shadow: inset 0 0 0 4px #fff; }
+.research-results { margin-top: 30px; }
+.research-section-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 13px; }
+.research-section-heading h2 { margin: 4px 0 0; color: var(--research-ink); font-size: 18px; }
+.research-section-heading > span { color: var(--research-muted); font-size: 12px; }
+.research-result-card { margin-bottom: 13px; padding: 19px 21px; border: 1px solid var(--research-line); border-radius: 13px; background: #fff; }
+.research-result-header { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.research-result-header h3 { margin: 5px 0 12px; color: var(--research-ink); font-size: 18px; line-height: 1.25; }
+.research-result-state { display: inline-flex; align-items: center; gap: 5px; color: var(--research-accent); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.research-angle { display: grid; gap: 3px; margin: 0 0 14px; color: var(--research-ink); font-size: 13px; line-height: 1.5; }
+.research-angle strong, .research-script strong, .research-articles > strong, .research-tags > strong { color: #7b8a85; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+.research-script { margin: 0 0 15px; padding: 12px 14px; border-radius: 9px; background: var(--research-soft); }
+.research-script p { margin: 6px 0 0; color: #344440; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.research-articles { display: grid; gap: 7px; }
+.research-articles > strong { margin-bottom: 2px; }
+.research-articles a { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 9px 11px; color: var(--research-ink); border: 1px solid #e7eeeb; border-radius: 8px; text-decoration: none; }
+.research-articles a:hover { border-color: #acdacc; background: #fbfefd; }
+.research-articles a svg { flex: 0 0 auto; color: var(--research-accent); }
+.research-articles a span { display: grid; gap: 3px; min-width: 0; }
+.research-articles b { overflow: hidden; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.research-articles small { color: var(--research-muted); font-size: 10px; }
+.research-tags { margin-top: 15px; }
+.research-tags > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.research-tags span { padding: 5px 8px; color: #43625a; background: var(--research-soft); border-radius: 6px; font-size: 11px; }
+.research-image-search { margin-top: 16px; padding: 13px; border: 1px solid #dce9e4; border-radius: 10px; background: #fbfefd; }
+.research-image-search-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.research-image-search-heading > div { display: grid; gap: 3px; }
+.research-image-search-heading strong { color: var(--research-ink); font-size: 12px; }
+.research-image-search-heading small { color: var(--research-muted); font-size: 10px; }
+.research-image-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.research-image-tile { display: grid; gap: 4px; min-width: 0; padding-bottom: 7px; color: var(--research-ink); border: 1px solid #e1ebe7; border-radius: 8px; background: #fff; text-decoration: none; overflow: hidden; }
+.research-image-tile:hover { border-color: #9dd2c2; box-shadow: 0 3px 10px #15382b10; }
+.research-image-tile img { display: block; width: 100%; height: 72px; object-fit: cover; background: #edf3f0; }
+.research-image-tile span, .research-image-tile small { display: block; overflow: hidden; padding: 0 7px; text-overflow: ellipsis; white-space: nowrap; }
+.research-image-tile span { font-size: 10px; font-weight: 700; }
+.research-image-tile small { color: var(--research-muted); font-size: 9px; }
+.research-warning, .dreamface-notice { display: flex; align-items: start; gap: 8px; margin-top: 15px; padding: 10px 12px; color: #8a6415; background: #fff9e7; border: 1px solid #f0e1ac; border-radius: 8px; font-size: 12px; line-height: 1.45; }
+.research-image-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--research-line); color: var(--research-muted); font-size: 11px; }
+.research-warning svg, .dreamface-notice svg { flex: 0 0 auto; margin-top: 1px; }
+.dreamface-notice { margin: -4px 0 17px; color: #42685d; background: #f1faf6; border-color: #cce9df; }
+.dreamface-account { display: flex; align-items: center; gap: 12px; padding: 13px; border: 1px solid #e5ece9; border-radius: 11px; }
+.dreamface-avatar { display: grid; place-items: center; width: 36px; height: 36px; color: var(--research-accent); background: var(--research-accent-soft); border-radius: 10px; }
+.dreamface-account-copy { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.dreamface-account-copy strong { overflow: hidden; color: var(--research-ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.dreamface-account-copy span { overflow: hidden; color: var(--research-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.dreamface-account-actions { display: flex; gap: 7px; }
+.dreamface-switcher { display: flex; align-items: center; gap: 10px; margin-top: 13px; color: var(--research-muted); font-size: 11px; }
+.dreamface-switcher select { min-width: 180px; }
+.dreamface-login { margin-top: 17px; padding: 17px; border: 1px solid #cce9df; border-radius: 11px; background: #fbfefd; }
+.dreamface-login-top { display: flex; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
+.dreamface-login-top > div { display: grid; gap: 3px; }
+.dreamface-login-top strong { color: var(--research-ink); font-size: 13px; }
+.dreamface-login-top small { color: var(--research-muted); font-size: 11px; }
+.dreamface-login .research-tabs { display: flex; gap: 4px; margin-bottom: 14px; padding: 3px; width: fit-content; border-radius: 7px; background: #edf3f0; }
+.dreamface-login .research-tabs button { padding: 7px 10px; border-radius: 5px; font-size: 11px; }
+.dreamface-login .research-form-actions { margin-top: 0; }
+.llm-card .research-form-actions { margin-top: 2px; }
+@media (max-width: 760px) {
+  .research-card { padding: 17px; }
+  .research-card-heading, .research-heading, .dreamface-account { align-items: start; flex-direction: column; }
+  .research-form-grid { grid-template-columns: 1fr; gap: 0; }
+  .research-form-actions { align-items: stretch; flex-direction: column; }
+  .research-form-actions .button { justify-content: center; }
+  .dreamface-account-actions { width: 100%; }
+  .dreamface-account-actions .button { flex: 1; justify-content: center; }
+  .research-primary-tabs { width: 100%; overflow-x: auto; }
+  .research-primary-tabs button { flex: 1; justify-content: center; white-space: nowrap; }
+  .research-image-search-heading { align-items: stretch; flex-direction: column; }
+  .research-image-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .research-image-tile img { height: 82px; }
+}
