@@ -192,7 +192,7 @@ export function AccountsPage({ data, run, notify }) {
                   : null;
                 return <div className="account-avatar-preview">
                   {avatarMedia?.thumbnailUrl ? <img src={avatarMedia.thumbnailUrl} alt="DreamFace MC still" /> : <span className="account-avatar-placeholder">MC</span>}
-                  <div><span className="account-avatar-kicker">MC STILL</span><strong>{avatarMedia ? `${account.avatarName || "Alex"} · ready` : "Created on first news render"}</strong><small>{avatarMedia ? "Avatar 3.0 Fast · 720p" : "The official avatar image is saved here automatically."}</small></div>
+                  <div><span className="account-avatar-kicker">AI MC STILL</span><strong>{avatarMedia ? `${account.avatarName || "AI News Host"} - ready` : "Created on first news render"}</strong><small>{avatarMedia ? `${account.avatarSource === "dreamface-image" ? "DreamFace Image" : "Highlight image endpoint"} - Avatar 3.0 Fast - 720p` : "An original AI presenter is generated and saved automatically."}</small></div>
                 </div>;
               })()}
               <div className="spread">

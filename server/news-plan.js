@@ -14,7 +14,7 @@ export const newsPlanSchema=z.object({
   imageMediaIds:z.array(z.string().uuid()).min(1).max(8),
   selectedImageIds:z.array(z.string()).max(5).default([]),
   resolution:z.union([z.literal(720),z.literal(1080)]).default(1080),
-  brand:z.string().max(24).default("VIRAL NEWS"),
+  brand:z.string().max(24).default("BBC"),
 });
 
 export async function writeNewsNarration(store,research,{llm=requestJsonContent}={}) {

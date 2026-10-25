@@ -5,6 +5,7 @@ import { chromium } from "playwright";
 import { providers } from "../../shared/contracts.js";
 import { importMedia, probe, binary, runProcess } from "../media.js";
 import { StudioError } from "../store.js";
+import { ensureNewsMcImage } from "../mc-image.js";
 
 export const DREAMFACE_PROVIDER = "dreamface";
 export const DREAMFACE_URL = providers.dreamface.url;
@@ -466,75 +467,25 @@ export class DreamFaceProvider {
       throw providerError(state.message, state.status === "verification" ? "VERIFICATION" : "NEEDS_LOGIN", 401);
     }
     const { page } = session;
+    const plan = job.payload.newsPlan || {};
     const oldCreationImages = new Set();
     // Snapshot existing creation thumbnails before submitting so polling never
     // downloads an older work when a profile already has history.
     await page.goto("https://www.dreamfaceapp.com/creation", { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
     await page.waitForTimeout(700);
     for (const url of await page.locator("img").evaluateAll((nodes) => nodes.map((node) => node.currentSrc || node.src).filter(Boolean)).catch(() => [])) oldCreationImages.add(url);
+
+    // Avatar 3.0 Fast needs a processed still. Generate one original AI MC
+    // automatically, reuse it for this DreamFace profile, and fall back to the
+    // DreamFace Image tool only when the configured Highlight-compatible image
+    // endpoint is unavailable.
+    const avatarMedia = await ensureNewsMcImage(store, session, job, account, plan, signal, update);
+    if (avatarMedia.kind !== "image") throw providerError("The generated MC still is not a valid image.", "INVALID_AVATAR_IMAGE", 422);
+
     await page.goto("https://www.dreamfaceapp.com/avatar", { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.getByText("More", { exact: true }).first().waitFor({ state: "visible", timeout: 30000 });
     await page.waitForTimeout(1800);
     await page.getByPlaceholder("Type or paste text here").waitFor({ state: "visible", timeout: 30000 });
-    const plan = job.payload.newsPlan || {};
-
-    // DreamFace's Avatar 3.0 Fast only becomes available after an image is
-    // uploaded. The news flow therefore keeps one official DreamFace still per
-    // profile: select the named gallery avatar once, download its image through
-    // the authenticated browser context, import it into the local media vault,
-    // and upload that saved image for every later render.
-    let avatarMedia = null;
-    const existingAvatarId = job.payload.avatarMediaId || account.avatarMediaId;
-    if (existingAvatarId) {
-      avatarMedia = store.require("media", existingAvatarId);
-      if (avatarMedia.kind !== "image") {
-        throw providerError("The saved DreamFace MC image is not a valid image.", "INVALID_AVATAR_IMAGE", 422);
-      }
-    } else {
-      const more = page.getByText("More", { exact: true }).first();
-      await more.click();
-      // DreamFace renders a hidden virtualized label and the visible card label
-      // with the same text. The last visible label is the selectable card.
-      const avatarName = String(plan.avatarName || "Alex");
-      const avatarLabel = page.getByText(avatarName, { exact: true }).last();
-      await avatarLabel.waitFor({ state: "visible", timeout: 20000 });
-      const avatarCard = avatarLabel.locator('xpath=ancestor::div[contains(@class,"_avatarCard_")][1]');
-      const avatarUrl = await avatarCard.locator("img").first().getAttribute("src").catch(() => null);
-      if (!avatarUrl) throw providerError(`DreamFace avatar “${avatarName}” has no downloadable still image.`, "AVATAR_IMAGE_UNAVAILABLE", 422);
-      await avatarLabel.click();
-      const confirm = page.getByRole("button", { name: "Confirm", exact: true });
-      if (await confirm.isVisible().catch(() => false)) await confirm.click();
-      await page.waitForTimeout(2200);
-
-      const response = await session.context.request.get(avatarUrl, {
-        timeout: 60000,
-        headers: { Referer: "https://www.dreamfaceapp.com/avatar" },
-      });
-      if (!response.ok()) throw providerError(`DreamFace avatar image download failed: HTTP ${response.status()}.`, "AVATAR_IMAGE_DOWNLOAD_FAILED", 422);
-      const contentType = String(response.headers()["content-type"] || "image/jpeg").split(";")[0].toLowerCase();
-      const extension = contentType.includes("png") ? ".png" : contentType.includes("webp") ? ".webp" : ".jpg";
-      const temporary = path.join(store.root, "temp", `${randomUUID()}${extension}`);
-      try {
-        await fs.writeFile(temporary, await response.body());
-        avatarMedia = await importMedia(store, temporary, {
-          name: `DreamFace MC · ${avatarName}${extension}`,
-          // The MC still belongs to the DreamFace profile and is reusable by
-          // news projects on different days, so keep it in the global vault.
-          projectId: null,
-          generated: true,
-          move: true,
-          jobId: job.id,
-        });
-      } finally {
-        await fs.rm(temporary, { force: true }).catch(() => {});
-        await response.dispose().catch(() => {});
-      }
-      if (avatarMedia.kind !== "image") throw providerError("DreamFace did not return a usable MC image.", "INVALID_AVATAR_IMAGE", 422);
-      store.patch("accounts", account.id, { avatarMediaId: avatarMedia.id, avatarName });
-      job.payload = { ...job.payload, avatarMediaId: avatarMedia.id };
-      store.patch("jobs", job.id, { payload: job.payload });
-    }
-
     // Upload the saved still first. This unlocks the Avatar 3.0 family in the
     // current DreamFace UI and makes the selected effect explicit and testable.
     const imageInput = page.locator('input[type="file"]').first();

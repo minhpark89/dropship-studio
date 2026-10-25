@@ -4,9 +4,9 @@ Viral Studio is a Windows desktop app for research, AI video production, timelin
 
 ## Download for Windows
 
-- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.1/Viral.Studio.Setup.0.5.1.exe) — install to Windows and create the Desktop shortcut.
-- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.1/Viral.Studio.0.5.1.exe) — run directly without installation.
-- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.1/SHA256SUMS.txt)
+- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.2/Viral.Studio.Setup.0.5.2.exe) — install to Windows and create the Desktop shortcut.
+- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.2/Viral.Studio.0.5.2.exe) — run directly without installation.
+- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.2/SHA256SUMS.txt)
 
 The desktop app starts with a version/loading screen, uses the Viral Studio icon, and stores user data in `Viral Data`; an installed upgrade can read legacy `Dropship Data` automatically.
 
@@ -18,12 +18,12 @@ The desktop app starts with a version/loading screen, uses the Viral Studio icon
 - Separate Channels, Content, Product and Research workspaces; Page selection, Meta token status and Page management.
 - Content management with News/Product type, first comment, store or article link, approved render-library video selection, schedule and handoff export.
 - DreamFace generation for news and product videos, local daily-rotation profiles, OpenAI-compatible research and FFmpeg render QA.
-- News broadcasts save one official MC still per DreamFace profile, upload it before generation, select Avatar 3.0 Fast at 720p with the visible 1 Free Daily option, then compose the narrated presenter with smooth zoom, pan and crossfade transitions.
+- News broadcasts automatically create one original AI MC still per DreamFace profile from the saved Highlight-compatible image endpoint, upload it before generation, select Avatar 3.0 Fast at 720p with the visible 1 Free Daily option, then compose the narrated presenter with smooth zoom, pan and crossfade transitions. DreamFace Image is the automatic fallback when the primary image endpoint is unavailable.
 - DreamFace profiles can generate and save random sign-in details for reuse. Registration opens the official website and pauses for any CAPTCHA or verification; creating a local profile does not claim an authenticated account or create a Gmail inbox.
 - Import the website domain, username and password from installed Highlight/Longform settings, test the connection, and explicitly publish a reviewed news article from Content. Its verified public URL becomes the first comment. Website passwords are encrypted separately from workspace snapshots.
 - Settings include Store/website defaults and First Comment templates; Meta vault supports System User and Via Token with App ID/App Secret validation.
 - Settings now discovers OpenAI-compatible models automatically; Render has separate News/Product modes and a fast 480p draft action.
-- Research feed, AI video generation providers, timeline editing and Windows packaging.
+- Research feed, AI video generation providers, timeline editing and Windows packaging. News graphics use the BBC label in the red straps and keep the source in the lower bar.
 
 ## Run from source
 
@@ -48,4 +48,4 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Viral Studio project. The Windows v0.5.1 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.5.1).
+This repository is the dedicated Viral Studio project. The Windows v0.5.2 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.5.2).

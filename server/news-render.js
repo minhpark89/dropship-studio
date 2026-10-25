@@ -92,13 +92,13 @@ export async function renderNewsBroadcast(store, job, presenter, plan, images, s
     headline: clean(plan?.headline || "News update", 100),
     narration: clean(plan?.narration || "", 500),
     source: clean(plan?.source || "News report", 100),
-    brand: clean(plan?.brand || "VIRAL NEWS", 24),
+    brand: "BBC",
   };
   try {
     signal.throwIfAborted();
     await fsPromises.copyFile(font, path.join(directory, "news-font.ttf"));
     const headlineFile = await writeText(directory, "headline.txt", wrap(safePlan.headline, 27, 3).toUpperCase());
-    const sourceFile = await writeText(directory, "source.txt", `SOURCE: ${safePlan.source.toUpperCase()}`);
+    const sourceFile = await writeText(directory, "source.txt", `SOURCE: ${clean(safePlan.source, 42).toUpperCase()}`);
     const brandFile = await writeText(directory, "brand.txt", safePlan.brand.toUpperCase());
     const ctaFile = await writeText(directory, "cta.txt", "FULL STORY\nIN THE FIRST COMMENT");
     const captionFiles = [];
@@ -136,10 +136,10 @@ export async function renderNewsBroadcast(store, job, presenter, plan, images, s
     filters.push(`[${background}]drawbox=x=0:y=0:w=iw:h=ih:color=#071526@0.12:t=fill[dim]`);
     filters.push(`[dim]drawbox=x=58:y=958:w=354:h=405:color=#071526@0.95:t=fill[mcframe]`);
     filters.push(`[mcframe][mc]overlay=x=75:y=978:enable='lt(t,${duration.toFixed(3)})'[presenter]`);
-    filters.push(`[presenter]drawbox=x=58:y=958:w=354:h=52:color=#d71920:t=fill,drawtext=fontfile=news-font.ttf:textfile=brand.txt:fontcolor=white:fontsize=30:x=75:y=968:enable='lt(t,${duration.toFixed(3)})'[label]`);
-    filters.push(`[label]drawbox=x=64:y=1410:w=348:h=56:color=#d71920:t=fill,drawtext=fontfile=news-font.ttf:textfile=brand.txt:fontcolor=white:fontsize=32:x=82:y=1420:enable='lt(t,${duration.toFixed(3)})'[strap]`);
+    filters.push(`[presenter]drawbox=x=58:y=958:w=354:h=52:color=#d71920:t=fill,drawtext=fontfile=news-font.ttf:textfile=brand.txt:fontcolor=white:fontsize=30:x='58+(354-text_w)/2':y=968:enable='lt(t,${duration.toFixed(3)})'[label]`);
+    filters.push(`[label]drawbox=x=64:y=1410:w=348:h=56:color=#d71920:t=fill,drawtext=fontfile=news-font.ttf:textfile=brand.txt:fontcolor=white:fontsize=32:x='64+(348-text_w)/2':y=1420:enable='lt(t,${duration.toFixed(3)})'[strap]`);
     filters.push(`[strap]drawbox=x=64:y=1466:w=952:h=184:color=white@0.96:t=fill,drawtext=fontfile=news-font.ttf:textfile=headline.txt:fontcolor=#081a32:fontsize=50:line_spacing=2:x=88:y=1490:enable='lt(t,${duration.toFixed(3)})'[headline]`);
-    filters.push(`[headline]drawbox=x=900:y=1466:w=116:h=184:color=#d71920:t=fill,drawtext=fontfile=news-font.ttf:textfile=brand.txt:fontcolor=white:fontsize=26:x=915:y=1530:enable='lt(t,${duration.toFixed(3)})'[corner]`);
+    filters.push(`[headline]drawbox=x=900:y=1466:w=116:h=184:color=#d71920:t=fill,drawtext=fontfile=news-font.ttf:textfile=brand.txt:fontcolor=white:fontsize=26:x='900+(116-text_w)/2':y=1530:enable='lt(t,${duration.toFixed(3)})'[corner]`);
     filters.push(`[corner]drawbox=x=64:y=1650:w=836:h=54:color=#071526@0.88:t=fill,drawtext=fontfile=news-font.ttf:textfile=source.txt:fontcolor=white:fontsize=24:x=88:y=1665:enable='lt(t,${duration.toFixed(3)})'[sourcebar]`);
     let captionVideo = "sourcebar";
     const captionDuration = duration / usableCaptionList.length;

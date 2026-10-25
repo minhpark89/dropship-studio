@@ -69,6 +69,14 @@ export class Store extends EventEmitter {
           model: "gpt-4o-mini",
           timeoutSeconds: 90,
         },
+        imageGeneration: {
+          enabled: true,
+          endpoint: "",
+          apiKey: "",
+          model: "",
+          autoDiscover: true,
+          dreamfaceFallback: true,
+        },
         meta: {
           enabled: false,
           graphVersion: "v26.0",
@@ -142,6 +150,14 @@ export class Store extends EventEmitter {
         model: "gpt-4o-mini",
         timeoutSeconds: 90,
       },
+      imageGeneration: {
+        enabled: true,
+        endpoint: "",
+        apiKey: "",
+        model: "",
+        autoDiscover: true,
+        dreamfaceFallback: true,
+      },
       meta: {
         enabled: false,
         graphVersion: "v26.0",
@@ -167,6 +183,10 @@ export class Store extends EventEmitter {
     this.state.settings.llm = {
       ...defaults.llm,
       ...(this.state.settings.llm || {}),
+    };
+    this.state.settings.imageGeneration = {
+      ...defaults.imageGeneration,
+      ...(this.state.settings.imageGeneration || {}),
     };
     this.state.settings.content = {
       ...defaults.content,
@@ -275,6 +295,12 @@ export class Store extends EventEmitter {
       snapshot.settings.llm = {
         ...snapshot.settings.llm,
         apiKey: snapshot.settings.llm.apiKey ? "[đã lưu]" : "",
+      };
+    }
+    if (snapshot.settings?.imageGeneration) {
+      snapshot.settings.imageGeneration = {
+        ...snapshot.settings.imageGeneration,
+        apiKey: snapshot.settings.imageGeneration.apiKey ? "[đã lưu]" : "",
       };
     }
     if (snapshot.settings?.meta) {

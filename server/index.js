@@ -27,6 +27,7 @@ import { SecretStore } from "./secret-store.js";
 import { mountProductionRoutes } from "./production.js";
 import { mountContentRoutes } from "./content.js";
 import { mountWebsiteRoutes } from "./website.js";
+import { inspectMcImageSettings } from "./mc-image.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
@@ -141,6 +142,9 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       dataDir: store.root,
       version: APP_VERSION,
     });
+  });
+  app.get("/api/settings/mc-image", async (req, res) => {
+    res.json(await inspectMcImageSettings(store));
   });
 
   mountSocialRoutes(app, store);
@@ -423,6 +427,14 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
         ffmpegPath: z.string().max(1000).optional(),
         ffprobePath: z.string().max(1000).optional(),
         browserVisible: z.boolean().optional(),
+        imageGeneration: z.object({
+          enabled: z.boolean().optional(),
+          endpoint: z.string().trim().max(2000).refine((value) => value === "" || httpUrl(value), "Image endpoint must be an HTTP or HTTPS URL.").optional(),
+          apiKey: z.string().max(2000).optional(),
+          model: z.string().trim().max(200).optional(),
+          autoDiscover: z.boolean().optional(),
+          dreamfaceFallback: z.boolean().optional(),
+        }).optional(),
         content: z.object({
           storeName: z.string().trim().max(160).optional(),
           storeUrl: z.string().trim().max(2000).refine(httpUrl, "URL Store phải bắt đầu bằng http:// hoặc https://.").optional(),
@@ -435,11 +447,19 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
         }).optional(),
       })
       .parse(req.body);
-    const { content, ...generalSettings } = input;
+    const { content, imageGeneration, ...generalSettings } = input;
     Object.assign(store.state.settings, generalSettings);
     if (content) store.state.settings.content = { ...(store.state.settings.content || {}), ...content };
+    if (imageGeneration) {
+      const current = store.state.settings.imageGeneration || {};
+      store.state.settings.imageGeneration = {
+        ...current,
+        ...imageGeneration,
+        apiKey: imageGeneration.apiKey === "[đã lưu]" ? current.apiKey : imageGeneration.apiKey ?? current.apiKey,
+      };
+    }
     store.save();
-    res.json(store.state.settings);
+    res.json(store.publicSnapshot().settings);
   });
   app.post("/api/desktop/reveal", async (req, res) => {
     if (!desktop)

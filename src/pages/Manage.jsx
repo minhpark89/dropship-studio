@@ -19,6 +19,7 @@ import {
   Trash2,
   KeyRound,
   BrainCircuit,
+  Image as ImageIcon,
 } from "lucide-react";
 import { api } from "../api.js";
 import { Button, Field, Badge, Empty, Notice } from "../components.jsx";
@@ -355,14 +356,18 @@ export function SettingsPage({ data, project, run, notify }) {
   const [modelsError, setModelsError] = useState("");
   const [llmTest, setLlmTest] = useState(null);
   const [llmTestBusy, setLlmTestBusy] = useState(false);
+  const [mcImage, setMcImage] = useState(null);
+  const [mcImageBusy, setMcImageBusy] = useState(false);
   const check = async () => {
     setBusy(true);
-    const [nextHealth, nextLicense] = await Promise.all([
+    const [nextHealth, nextLicense, nextMcImage] = await Promise.all([
       run(() => api("/health")),
       run(() => api("/license")),
+      run(() => api("/settings/mc-image")),
     ]);
     setHealth(nextHealth);
     setLicense(nextLicense);
+    setMcImage(nextMcImage);
     setBusy(false);
   };
   useEffect(() => {
@@ -397,6 +402,12 @@ export function SettingsPage({ data, project, run, notify }) {
     const result = await run(() => api("/settings/llm/test"));
     if (result) setLlmTest(result);
     setLlmTestBusy(false);
+  };
+  const refreshMcImage = async () => {
+    setMcImageBusy(true);
+    const result = await run(() => api("/settings/mc-image"));
+    if (result) setMcImage(result);
+    setMcImageBusy(false);
   };
   const updateContentSetting = (key, value) => setSettings((current) => ({
     ...current,
@@ -753,6 +764,44 @@ export function SettingsPage({ data, project, run, notify }) {
           </form>
         </section>
         <WebsiteSettings settings={data.settings?.website} notify={notify} />
+        <section className="panel settings-mc-image-panel">
+          <div className="panel-heading">
+            <h3><ImageIcon size={18} /> AI MC for News</h3>
+            <Badge status={mcImage?.source === "disabled" ? "idle" : mcImage?.source && mcImage.source !== "unconfigured" ? "ready" : "warning"} />
+          </div>
+          <p className="muted small">When you click Render, Viral Studio creates one original AI presenter still for each DreamFace profile, uploads it, then selects Avatar 3.0 Fast at 720p. The saved still is reused on later days.</p>
+          <form onSubmit={async (event) => {
+            event.preventDefault();
+            const imageGeneration = { ...(settings.imageGeneration || {}) };
+            if (imageGeneration.apiKey === "[đã lưu]") delete imageGeneration.apiKey;
+            const result = await run(() => api("/settings", { imageGeneration }, "PATCH"), "Saved AI MC image settings.");
+            if (result) {
+              setSettings((current) => ({ ...current, imageGeneration: { ...(result.imageGeneration || current.imageGeneration), apiKey: "" } }));
+              refreshMcImage();
+            }
+          }}>
+            <label className="toggle-field">
+              <input type="checkbox" checked={settings.imageGeneration?.enabled !== false} onChange={(event) => setSettings((current) => ({ ...current, imageGeneration: { ...(current.imageGeneration || {}), enabled: event.target.checked } }))} />
+              <span><strong>Auto-generate AI MC still</strong><small>Highlight's saved OpenAI-compatible image endpoint is detected automatically.</small></span>
+            </label>
+            <div className="form-grid">
+              <Field label="Image endpoint override" hint="Optional. Leave blank to read Highlight's local image_provider config.">
+                <input type="url" value={settings.imageGeneration?.endpoint || ""} placeholder="https://…/v1/images/generations" onChange={(event) => setSettings((current) => ({ ...current, imageGeneration: { ...(current.imageGeneration || {}), endpoint: event.target.value } }))} />
+              </Field>
+              <Field label="Image model" hint={mcImage?.model ? `Detected: ${mcImage.model}` : "Leave blank for automatic detection"}>
+                <input value={settings.imageGeneration?.model || ""} placeholder="ag/gemini-3.1-flash-image" onChange={(event) => setSettings((current) => ({ ...current, imageGeneration: { ...(current.imageGeneration || {}), model: event.target.value } }))} />
+              </Field>
+            </div>
+            <Field label="Image API key" hint={settings.imageGeneration?.apiKey === "[đã lưu]" ? "A key is saved locally. Leave blank to keep it." : "Optional when the endpoint does not require a key."}>
+              <input type="password" autoComplete="off" value={settings.imageGeneration?.apiKey === "[đã lưu]" ? "" : settings.imageGeneration?.apiKey || ""} placeholder={settings.imageGeneration?.apiKey === "[đã lưu]" ? "•••••••• · saved locally" : "sk-…"} onChange={(event) => setSettings((current) => ({ ...current, imageGeneration: { ...(current.imageGeneration || {}), apiKey: event.target.value } }))} />
+            </Field>
+            <div className="form-grid">
+              <label className="toggle-field"><input type="checkbox" checked={settings.imageGeneration?.autoDiscover !== false} onChange={(event) => setSettings((current) => ({ ...current, imageGeneration: { ...(current.imageGeneration || {}), autoDiscover: event.target.checked } }))} /><span><strong>Detect Highlight endpoint</strong><small>{mcImage?.source === "highlight-config" ? "Highlight config found on this PC." : "Search local Highlight config when the override is blank."}</small></span></label>
+              <label className="toggle-field"><input type="checkbox" checked={settings.imageGeneration?.dreamfaceFallback !== false} onChange={(event) => setSettings((current) => ({ ...current, imageGeneration: { ...(current.imageGeneration || {}), dreamfaceFallback: event.target.checked } }))} /><span><strong>DreamFace Image fallback</strong><small>Use DreamFace Image only if the primary image endpoint fails or is unavailable.</small></span></label>
+            </div>
+            <div className="settings-llm-footer"><span className="small muted">{mcImage?.source === "highlight-config" ? "Primary: Highlight image endpoint" : mcImage?.source === "settings" ? "Primary: configured image endpoint" : mcImage?.source === "unconfigured" ? "No image endpoint detected yet" : "AI MC generation disabled"}</span><div className="settings-llm-test-area"><Button type="button" onClick={refreshMcImage} busy={mcImageBusy}>Refresh detection</Button><Button variant="primary" type="submit"><Save size={15} /> Save AI MC settings</Button></div></div>
+          </form>
+        </section>
         <section className="panel settings-content-panel">
           <div className="panel-heading">
             <h3><Globe2 size={18} /> Content · Store &amp; website</h3>
