@@ -3,7 +3,8 @@
 Updated: 2026-10-25
 Repository: `D:\DROPSHIP\APP Dropship\studio`
 Branch: `main`
-Verified commit: `81dd822` (`fix: load research thumbnails in desktop UI`)
+Source release commit: `81dd822` (`fix: load research thumbnails in desktop UI`)
+Handoff commit: `5280607` (`docs: add v0.5.3 session handoff`)
 Tag/release: `v0.5.3`
 
 ## Verified state
@@ -32,6 +33,14 @@ Tag/release: `v0.5.3`
 - `npm run test:workspaces`: passed with no console errors or horizontal overflow.
 - Installed app browser check: six Research thumbnails loaded with `naturalWidth > 0`; no console errors.
 - v0.5.3 installer and portable files were uploaded to the GitHub release with SHA-256 checksums.
+
+## Cleanup completed
+
+- Removed old test/checkpoint output from `studio/.verification` and the top-level `.verification` directory.
+- Removed old review folders v0.4.0, v0.5.0 and v0.5.2, plus obsolete root handoff/session files.
+- Removed old release executables, unpacked packaging output and release test data.
+- Kept only the v0.5.3 installer, portable executable and `SHA256SUMS.txt` in `release/`.
+- Kept `.studio/profiles/`, installed application data, source dependencies and the current v0.5.3 release assets.
 
 ## Known limits for the next session
 
