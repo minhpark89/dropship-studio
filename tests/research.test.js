@@ -15,7 +15,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fsp.rm(root, { recursive: true, force: true })));
 });
 
-async function fixture({ fetchImpl, llm = {} } = {}) {
+async function fixture({ fetchImpl, llm = {}, queue } = {}) {
   const root = path.resolve(".verification", `research-${randomUUID()}`);
   await fsp.mkdir(root, { recursive: true });
   roots.push(root);
@@ -27,7 +27,7 @@ async function fixture({ fetchImpl, llm = {} } = {}) {
   };
   const app = express();
   app.use(express.json());
-  mountResearchRoutes(app, store, { fetchImpl });
+  mountResearchRoutes(app, store, { fetchImpl, queue });
   app.use((error, req, res, next) => res.status(error.status || 400).json({ code: error.code || "INVALID_REQUEST", error: error.message }));
   const server = await new Promise((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -123,6 +123,31 @@ test("LLM settings can discover models from an OpenAI-compatible endpoint", asyn
   assert.equal(calls[0].options.headers.authorization, "Bearer stored-key");
 });
 
+test("LLM connection test calls the saved model without exposing the key", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ headline: "Connection OK", angle: "", script: "", imageQueries: [] }) } }] }), {
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const { request } = await fixture({
+    fetchImpl,
+    llm: { enabled: true, apiKey: "secret-token", endpoint: "https://llm.example.test/v1", model: "test-model" },
+  });
+  const response = await request("/api/settings/llm/test", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(response.status, 200);
+  const body = await json(response);
+  assert.equal(body.ok, true);
+  assert.equal(body.model, "test-model");
+  assert.equal(calls[0].options.headers.authorization, "Bearer secret-token");
+  assert.equal(JSON.stringify(body).includes("secret-token"), false);
+});
+
 test("research can call a local OpenAI-compatible endpoint without an API key", async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
@@ -188,4 +213,41 @@ test("research image queries search Wikimedia and persist attribution metadata",
   assert.equal(payload.images.length, 1);
   assert.equal(payload.result.imageSearchResults[0].license, "CC BY-SA 4.0");
   assert.equal(payload.result.imageSearchResults[0].attribution, "Example photographer");
+});
+
+test("one-click news video searches, imports, assembles and queues a vertical draft", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1kAAAAASUVORK5CYII=", "base64");
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.includes("commons.wikimedia.org")) {
+      return new Response(JSON.stringify({ query: { pages: {
+        99: { pageid: 99, title: "File:News image.png", canonicalurl: "https://commons.wikimedia.org/wiki/File:News_image.png", imageinfo: [{ thumburl: "https://upload.wikimedia.org/news.png", width: 720, height: 1280, mime: "image/png", extmetadata: {} }] },
+      } } }), { headers: { "content-type": "application/json" } });
+    }
+    if (value.includes("upload.wikimedia.org")) return new Response(png, { headers: { "content-type": "image/png" } });
+    return new Response(rss, { headers: { "content-type": "application/rss+xml" } });
+  };
+  let enqueued = null;
+  const queue = { enqueueRender(input) { enqueued = input; return { id: "render-job", status: "queued" }; } };
+  const { request, project } = await fixture({ fetchImpl, queue });
+  const created = await json(await request("/api/research", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ projectId: project.id, topic: "one", feeds: ["https://example.test/feed.xml"], maxArticles: 5 }),
+  }));
+  const response = await request(`/api/research/${created.id}/auto-video`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(response.status, 201);
+  const payload = await json(response);
+  assert.equal(payload.imported.length, 1);
+  assert.equal(payload.assembly.additions, 1);
+  assert.ok(payload.assembly.overlays >= 2);
+  assert.equal(payload.project.timeline.ratio, "9:16");
+  assert.equal(payload.project.timeline.resolution, 720);
+  assert.equal(payload.project.timeline.quality, "draft");
+  assert.equal(payload.job.id, "render-job");
+  assert.equal(enqueued.timeline.texts.length >= 2, true);
 });

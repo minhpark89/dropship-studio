@@ -352,6 +352,8 @@ export function SettingsPage({ data, project, run, notify }) {
   const [modelOptions, setModelOptions] = useState([]);
   const [modelsBusy, setModelsBusy] = useState(false);
   const [modelsError, setModelsError] = useState("");
+  const [llmTest, setLlmTest] = useState(null);
+  const [llmTestBusy, setLlmTestBusy] = useState(false);
   const check = async () => {
     setBusy(true);
     const [nextHealth, nextLicense] = await Promise.all([
@@ -388,6 +390,12 @@ export function SettingsPage({ data, project, run, notify }) {
     const timer = setTimeout(() => loadModels(true), 350);
     return () => clearTimeout(timer);
   }, [settings.llm?.endpoint]);
+  const testLlm = async () => {
+    setLlmTestBusy(true);
+    const result = await run(() => api("/settings/llm/test"));
+    if (result) setLlmTest(result);
+    setLlmTestBusy(false);
+  };
   return (
     <div className="page settings-page">
       <div className="page-heading">
@@ -716,7 +724,13 @@ export function SettingsPage({ data, project, run, notify }) {
               </Field>
             </div>
             <div className="settings-llm-footer">
-              <span>Endpoint được lưu riêng trên máy này.</span>
+              <div className="settings-llm-test-area">
+                <Button type="button" className="settings-llm-test-button" onClick={testLlm} busy={llmTestBusy} disabled={!settings.llm?.endpoint || !settings.llm?.model}>
+                  <CheckCircle2 size={15} />
+                  Test LLM
+                </Button>
+                {llmTest && <span className="settings-llm-result"><CheckCircle2 size={14} /> Phản hồi {llmTest.model} · {llmTest.latencyMs}ms</span>}
+              </div>
               <Button variant="primary" type="submit">
                 <Save size={15} />
                 Lưu endpoint LLM

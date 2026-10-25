@@ -3,9 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { StudioError } from "./store.js";
 
-const GRAPH_VERSION = "v24.0";
+const GRAPH_VERSION = "v26.0";
 const accessTokenSchema = z.string().trim().min(10).max(5000);
 const pageIdSchema = z.string().regex(/^\d{1,40}$/);
+const tokenKindSchema = z.enum(["USER", "SYSTEM_USER"]);
 
 function safeMessage(value, token = "") {
   const message = String(value || "Meta request failed");
@@ -174,6 +175,7 @@ export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "ht
 function metaState(store) {
   store.state.settings.meta ??= {};
   const meta = store.state.settings.meta;
+  if (!meta.graphVersion || meta.graphVersion === "v24.0") meta.graphVersion = GRAPH_VERSION;
   meta.pages ??= [];
   meta.publications ??= [];
   meta.tokens ??= [];
@@ -445,6 +447,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
 
   app.post(["/api/meta/tokens", "/api/tokens"], async (req, res) => {
     const accessToken = accessTokenSchema.parse(req.body?.accessToken || req.body?.token);
+    const kind = tokenKindSchema.parse(req.body?.kind || "USER");
     const user = await client.me(accessToken);
     const pageResponse = await client.pages(accessToken);
     const pages = Array.isArray(pageResponse?.data) ? pageResponse.data.filter((page) => pageIdSchema.safeParse(String(page.id)).success).map((page) => ({
@@ -454,7 +457,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     const meta = metaState(store);
     const entry = upsertToken(meta, accessToken, { user, pages });
     entry.name = String(req.body?.name || entry.name).trim().slice(0, 120) || entry.name;
-    entry.kind = String(req.body?.kind || entry.kind || "USER").slice(0, 40);
+    entry.kind = kind;
     entry.note = String(req.body?.note || entry.note || "").slice(0, 2000);
     entry.userId = String(user.id || entry.userId || "");
     meta.activeTokenId = entry.id;

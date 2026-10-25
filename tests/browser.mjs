@@ -113,6 +113,8 @@ try {
   await page.screenshot({ path: path.join(output, 'accounts.png'), fullPage: true });
   await nav('Cài đặt');
   await page.getByText('Chrome / Edge', { exact: true }).waitFor();
+  await page.locator('.settings-llm-panel').waitFor();
+  assert.equal(await page.locator('.settings-llm-test-button').count(), 1);
   await page.getByLabel('Số tác vụ AI đồng thời').fill('3');
   await page.getByRole('button', { name: 'Lưu cài đặt' }).click();
   await page.waitForTimeout(300);

@@ -60,7 +60,7 @@ export class Store extends EventEmitter {
         },
         meta: {
           enabled: false,
-          graphVersion: "v24.0",
+          graphVersion: "v26.0",
           accessToken: "",
           activeTokenId: "",
           user: null,
@@ -121,7 +121,7 @@ export class Store extends EventEmitter {
       },
       meta: {
         enabled: false,
-        graphVersion: "v24.0",
+        graphVersion: "v26.0",
         accessToken: "",
         activeTokenId: "",
         user: null,
@@ -154,6 +154,16 @@ export class Store extends EventEmitter {
       tokenGroups: Array.isArray(this.state.settings.meta?.tokenGroups) ? this.state.settings.meta.tokenGroups : [],
       pageGroups: Array.isArray(this.state.settings.meta?.pageGroups) ? this.state.settings.meta.pageGroups : [],
     };
+    if (this.state.settings.meta.graphVersion === "v24.0") {
+      this.state.settings.meta.graphVersion = defaults.meta.graphVersion;
+      recovered = true;
+    }
+    for (const token of this.state.settings.meta.tokens) {
+      if (!["USER", "SYSTEM_USER"].includes(token.kind)) {
+        token.kind = "USER";
+        recovered = true;
+      }
+    }
     for (const job of this.state.jobs) {
       if (activeStatuses.includes(job.status)) {
         job.status = "interrupted";

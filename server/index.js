@@ -131,12 +131,12 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       tools: await checkTools(store.state.settings),
       browser,
       dataDir: store.root,
-      version: "0.3.0",
+      version: "0.3.1",
     });
   });
 
   mountSocialRoutes(app, store);
-  mountResearchRoutes(app, store);
+  mountResearchRoutes(app, store, { queue });
   mountMetaRoutes(app, store);
 
   const checkAccount = async (id) => {

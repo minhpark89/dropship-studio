@@ -4,9 +4,9 @@ Viral Studio is a Windows desktop app for research, AI video production, timelin
 
 ## Download for Windows
 
-- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.3.0/Viral.Studio.Setup.0.3.0.exe) — install to Windows and create the Desktop shortcut.
-- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.3.0/Viral.Studio.0.3.0.exe) — run directly without installation.
-- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.3.0/SHA256SUMS.txt)
+- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.3.1/Viral.Studio.Setup.0.3.1.exe) — install to Windows and create the Desktop shortcut.
+- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.3.1/Viral.Studio.0.3.1.exe) — run directly without installation.
+- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.3.1/SHA256SUMS.txt)
 
 The desktop app starts with a version/loading screen, uses the Viral Studio icon, and stores user data in `Viral Data`; an installed upgrade can read legacy `Dropship Data` automatically.
 
@@ -41,4 +41,4 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Viral Studio project. The Windows v0.3.0 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.3.0).
+This repository is the dedicated Viral Studio project. The Windows v0.3.1 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.3.1).

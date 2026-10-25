@@ -17,6 +17,7 @@ export function buildResearchAssemblyTimeline(
   assets,
   result,
   idFactory = fallbackId,
+  options = {},
 ) {
   const baseTimeline = {
     ...timeline,
@@ -32,7 +33,7 @@ export function buildResearchAssemblyTimeline(
       inSec: 0,
       outSec: Number(media.duration) > 0 ? Number(media.duration) : 5,
       speed: 1,
-      zoom: 1,
+      zoom: options.template === "news-short" ? 1.06 : 1,
       fit: "cover",
       volume: 1,
     }));
@@ -73,6 +74,33 @@ export function buildResearchAssemblyTimeline(
       color: "#ffffff",
       background: true,
     });
+  }
+
+  if (options.template === "news-short") {
+    const sentences = cleanText(result?.script || result?.angle, 4000)
+      .split(/(?<=[.!?])\s+|\r?\n/)
+      .map((value) => cleanText(value, 220))
+      .filter((value) => value.length > 8)
+      .slice(0, additions.length);
+    let cursor = startSec;
+    for (let index = 0; index < additions.length; index += 1) {
+      const duration = clipDuration(additions[index]);
+      const caption = sentences[index] || (index === 0 ? cleanText(result?.angle, 220) : "");
+      if (caption) {
+        overlays.push({
+          id: idFactory(),
+          text: caption,
+          startSec: cursor,
+          endSec: cursor + duration,
+          x: 0.5,
+          y: 0.78,
+          size: 29,
+          color: "#ffffff",
+          background: true,
+        });
+      }
+      cursor += duration;
+    }
   }
 
   return {

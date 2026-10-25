@@ -12,6 +12,7 @@ import {
 import { StudioError } from "./store.js";
 import { importMedia } from "./media.js";
 import { downloadImageAsset, searchImageQueries } from "./image-search.js";
+import { buildResearchAssemblyTimeline } from "../shared/research-assembly.js";
 
 const DEFAULT_FEEDS = [
   "https://feeds.bbci.co.uk/news/rss.xml",
@@ -306,6 +307,29 @@ async function listLlmModels({ endpoint, apiKey = "", timeoutSeconds = 30, fetch
   }
 }
 
+async function testLlmConnection({ settings, fetchImpl }) {
+  const startedAt = Date.now();
+  const content = await requestLlm({
+    settings,
+    request: {
+      topic: "connection test",
+      niche: "system",
+      language: "en",
+    },
+    articles: [],
+    fetchImpl,
+  });
+  const preview = typeof content === "string"
+    ? content.trim().slice(0, 600)
+    : JSON.stringify(content).slice(0, 600);
+  return {
+    ok: true,
+    model: settings.model,
+    latencyMs: Date.now() - startedAt,
+    preview,
+  };
+}
+
 function validateFeedUrls(feeds) {
   return feeds.map((value) => {
     const url = new URL(value);
@@ -395,6 +419,11 @@ export function mountResearchRoutes(app, store, options = {}) {
     res.json(await listLlmModels({ endpoint: body.endpoint, apiKey, timeoutSeconds: current.timeoutSeconds, fetchImpl }));
   });
 
+  app.post("/api/settings/llm/test", async (req, res) => {
+    const settings = llmSettingsSchema.parse(store.state.settings?.llm || {});
+    res.json(await testLlmConnection({ settings, fetchImpl }));
+  });
+
   app.get("/api/research", (req, res) => {
     const projectId = req.query.projectId;
     if (projectId) z.string().uuid().parse(projectId);
@@ -433,6 +462,73 @@ export function mountResearchRoutes(app, store, options = {}) {
       warnings: [...new Set([...(result.warnings || []), ...warnings])],
     });
     res.status(201).json({ result: updated, imported, warnings });
+  });
+
+  app.post("/api/research/:id/auto-video", async (req, res) => {
+    const result = store.require("researchResults", req.params.id);
+    let imageSearchResults = result.imageSearchResults || [];
+    let warnings = [...(result.warnings || [])];
+    if (!imageSearchResults.length) {
+      const searched = await searchImageQueries(result.imageQueries || [result.topic], {
+        fetchImpl,
+        maxResultsPerQuery: 3,
+        maxResults: 12,
+      });
+      imageSearchResults = searched.images.map((image) => researchImageSchema.parse(image));
+      warnings = [...new Set([...warnings, ...searched.warnings])];
+    }
+    if (!imageSearchResults.length && !(result.imageMediaIds || []).length) {
+      throw new StudioError("LLM chưa tìm được ảnh công khai để dựng video.", "IMAGE_SEARCH_EMPTY", 502);
+    }
+    const existingMediaIds = [...new Set(result.imageMediaIds || [])];
+    const selected = imageSearchResults.slice(0, 8);
+    const missing = selected.slice(existingMediaIds.length);
+    const imported = [];
+    for (const image of missing) {
+      try {
+        const media = await downloadImageAsset({ image, store, projectId: result.projectId, fetchImpl });
+        imported.push({ imageId: image.id, mediaId: media.id });
+      } catch (error) {
+        warnings.push(`${image.title || image.query}: ${error.message}`);
+      }
+    }
+    const imageMediaIds = [...new Set([...existingMediaIds, ...imported.map((item) => item.mediaId)])].slice(0, 12);
+    if (!imageMediaIds.length) throw new StudioError("Không tải được ảnh công khai để dựng video.", "IMAGE_IMPORT_EMPTY", 502);
+    const updatedResult = store.patch("researchResults", result.id, {
+      imageSearchResults,
+      imageMediaIds,
+      warnings: [...new Set(warnings)],
+    });
+    const project = store.require("projects", result.projectId);
+    const assets = imageMediaIds.map((id) => store.state.media.find((media) => media.id === id)).filter(Boolean);
+    const baseTimeline = {
+      ...project.timeline,
+      ratio: "9:16",
+      resolution: 720,
+      fps: 30,
+      quality: "draft",
+    };
+    const assembly = buildResearchAssemblyTimeline(
+      baseTimeline,
+      assets,
+      updatedResult,
+      undefined,
+      { template: "news-short" },
+    );
+    const updatedProject = store.patch("projects", project.id, { timeline: assembly.timeline });
+    const job = options.queue?.enqueueRender({
+      projectId: project.id,
+      name: `News auto · ${updatedResult.headline || updatedResult.topic}`,
+      timeline: assembly.timeline,
+    }) || null;
+    res.status(201).json({
+      result: updatedResult,
+      project: updatedProject,
+      imported,
+      warnings: [...new Set(warnings)],
+      assembly: { additions: assembly.additions.length, overlays: assembly.overlays.length },
+      job,
+    });
   });
 
   app.post("/api/research/:id/import-images", async (req, res) => {

@@ -34,21 +34,44 @@ import { ProductPage } from "./pages/Product.jsx";
 import "./style.css";
 import "./pages/workspace.css";
 
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 
-const tabs = [
-  ["research", "Research & News", Search],
-  ["product", "Product Studio", ShoppingBag],
-  ["content", "Content Studio", Newspaper],
-  ["pages", "Channels & Tokens", Users],
-  ["create", "Tạo bằng AI", Sparkles],
-  ["storyboard", "Kịch bản", Clapperboard],
-  ["accounts", "Tài khoản", Users],
-  ["library", "Thư viện", Library],
-  ["editor", "Dựng video", Scissors],
-  ["queue", "Hàng đợi", ListVideo],
-  ["settings", "Cài đặt", Settings2],
-  ["social", "Page & bài đăng", Newspaper],
+const navGroups = [
+  {
+    label: "BẮT ĐẦU",
+    tabs: [
+      ["create", "Tạo bằng AI", Sparkles],
+      ["research", "Research & News", Search],
+      ["product", "Product Studio", ShoppingBag],
+    ],
+  },
+  {
+    label: "DỰNG VIDEO",
+    tabs: [
+      ["storyboard", "Kịch bản", Clapperboard],
+      ["editor", "Dựng video", Scissors],
+    ],
+  },
+  {
+    label: "NỘI DUNG & KÊNH",
+    tabs: [
+      ["content", "Content Studio", Newspaper],
+      ["pages", "Channels & Tokens", Users],
+      ["social", "Page & bài đăng", Newspaper],
+    ],
+  },
+  {
+    label: "QUẢN LÝ",
+    tabs: [
+      ["accounts", "Tài khoản", Users],
+      ["library", "Thư viện", Library],
+      ["queue", "Hàng đợi", ListVideo],
+    ],
+  },
+  {
+    label: "HỆ THỐNG",
+    tabs: [["settings", "Cài đặt", Settings2]],
+  },
 ];
 const pages = {
   research: ResearchPage,
@@ -151,19 +174,24 @@ function App() {
             Viral<span>STUDIO</span>
           </div>
         </a>
-        <div className="sidebar-label">KHÔNG GIAN SÁNG TẠO</div>
+        <div className="sidebar-label">VIRAL WORKSPACE</div>
         <nav>
-          {tabs.map(([id, label, Icon]) => (
-            <button
-              key={id}
-              onClick={() => navigate(id)}
-              className={tab === id ? "active" : ""}
-              title={label}
-            >
-              <Icon size={19} />
-              <span>{label}</span>
-              {id === "queue" && pending > 0 && <b>{pending}</b>}
-            </button>
+          {navGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <div className="nav-group-label">{group.label}</div>
+              {group.tabs.map(([id, label, Icon]) => (
+                <button
+                  key={id}
+                  onClick={() => navigate(id)}
+                  className={tab === id ? "active" : ""}
+                  title={label}
+                >
+                  <Icon size={19} />
+                  <span>{label}</span>
+                  {id === "queue" && pending > 0 && <b>{pending}</b>}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="sidebar-bottom">

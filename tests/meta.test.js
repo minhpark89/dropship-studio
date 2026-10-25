@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createMetaClient, publicMeta, postPreflight } from "../server/meta.js";
 
-test("Meta client uses Graph v24 and keeps token out of response data", async () => {
+test("Meta client uses the current Graph version and keeps token out of response data", async () => {
   const requests = [];
   const client = createMetaClient({
     fetchImpl: async (url, init) => {
@@ -12,9 +12,9 @@ test("Meta client uses Graph v24 and keeps token out of response data", async ()
   });
   const result = await client.me("user-token-123456");
   assert.equal(result.id, "42");
-  assert.match(requests[0].url, /graph\.facebook\.com\/v24\.0\/me/);
+  assert.match(requests[0].url, /graph\.facebook\.com\/v26\.0\/me/);
   assert.match(requests[0].url, /access_token=user-token-123456/);
-  const view = publicMeta({ accessToken: "secret", graphVersion: "v24.0", user: { id: "42" }, pages: [{ id: "9", name: "Page", accessToken: "page-secret" }], boundPageId: "9", boundPageName: "Page" });
+  const view = publicMeta({ accessToken: "secret", graphVersion: "v26.0", user: { id: "42" }, pages: [{ id: "9", name: "Page", accessToken: "page-secret" }], boundPageId: "9", boundPageName: "Page" });
   assert.equal(view.connected, true);
   assert.equal(view.pages[0].hasToken, true);
   assert.equal("accessToken" in view.pages[0], false);
@@ -55,6 +55,8 @@ test("Meta routes connect, redact tokens, and bind a Page", async () => {
   const server = await new Promise((resolve) => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
+    const invalidKind = await fetch(`${base}/api/tokens`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ accessToken: "user-token-secret-123", kind: "TEAM" }) });
+    assert.equal(invalidKind.status, 400);
     const response = await fetch(`${base}/api/meta/connect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ accessToken: "user-token-secret-123" }) });
     assert.equal(response.status, 200);
     const connected = await response.json();

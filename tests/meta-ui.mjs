@@ -30,6 +30,10 @@ try {
   await page.locator('[role="dialog"]').getByRole("button", { name: "Hủy" }).click();
   await page.getByRole("button", { name: /Thêm token/ }).click();
   assert.equal(await page.locator('[role="dialog"] input[type="password"]').count(), 1);
+  const tokenType = page.locator('[role="dialog"] select').first();
+  assert.equal(await tokenType.locator('option').count(), 2);
+  assert.equal(await tokenType.locator('option[value="TEAM"]').count(), 0);
+  assert.equal(await page.locator('[role="dialog"]').getByText(/User access token dùng để xác minh/).count(), 1);
   await page.locator('[role="dialog"]').getByRole("button", { name: "Hủy" }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
