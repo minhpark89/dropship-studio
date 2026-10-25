@@ -52,6 +52,14 @@ try {
   const queuedState = await page.evaluate(async () => (await fetch("/api/state")).json());
   assert.equal(queuedState.jobs.some((job) => job.payload?.provider === "dreamface"), true);
   report.checks.push("Product Studio queues a DreamFace video request");
+  await page.locator("nav button").nth(8).click();
+  await page.locator(".render-hub").waitFor();
+  assert.equal(await page.locator(".render-mode-tabs button").count(), 2);
+  await page.locator(".render-mode-tabs button").nth(1).click();
+  assert.equal(await page.locator(".editor-heading .eyebrow").innerText(), "PRODUCT RENDER");
+  await page.locator(".render-mode-tabs button").nth(0).click();
+  assert.equal(await page.locator(".editor-heading .eyebrow").innerText(), "NEWS RENDER");
+  report.checks.push("Render workspace switches between News and Product without leaving the project");
   await page.getByRole("button", { name: "Tài khoản", exact: true }).click();
   await page.getByRole("button", { name: "Tạo slot xoay vòng" }).click();
   const slots = page.locator('[role="dialog"]');

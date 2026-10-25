@@ -34,6 +34,9 @@ export function AccountsPage({ data, run, notify }) {
   const accounts = data.accounts.filter(
     (account) => filter === "all" || account.provider === filter,
   );
+  const dreamfaceAccounts = data.accounts.filter((account) => account.provider === "dreamface");
+  const dreamfaceReady = dreamfaceAccounts.filter((account) => account.status === "ready").length;
+  const dreamfaceNeedsLogin = dreamfaceAccounts.filter((account) => account.status === "needs_login").length;
   const sameProfile = (left, right) =>
     (left.profileId || left.id) === (right.profileId || right.id);
   const sharedProfile = (account) =>
@@ -52,6 +55,17 @@ export function AccountsPage({ data, run, notify }) {
     if (result?.message) notify(result.message);
     setBusy("");
     return result;
+  };
+  const checkDreamfaceAll = async () => {
+    if (!dreamfaceAccounts.length || busy) return;
+    setBusy("dreamface-all");
+    let checked = 0;
+    for (const account of dreamfaceAccounts) {
+      const result = await run(() => api(`/accounts/${account.id}/check`));
+      if (result) checked += 1;
+    }
+    setBusy("");
+    if (checked) notify(`Đã kiểm tra ${checked} profile DreamFace. Profile sẵn sàng sẽ tự được xoay vòng khi chọn Tự chọn.`);
   };
   const submit = async (event) => {
     event.preventDefault();
@@ -106,6 +120,21 @@ export function AccountsPage({ data, run, notify }) {
           Thêm tài khoản
         </Button></div>
       </div>
+      <section className="dreamface-pool">
+        <div className="dreamface-pool-copy">
+          <div className="eyebrow">DREAMFACE POOL</div>
+          <h3>{dreamfaceAccounts.length ? `${dreamfaceAccounts.length} profile đang quản lý` : "Tạo pool DreamFace"}</h3>
+          <p>Chọn <strong>Tự chọn</strong> khi render, app sẽ dùng profile sẵn sàng ít dùng gần đây nhất rồi xoay sang profile kế tiếp.</p>
+        </div>
+        <div className="dreamface-pool-stats">
+          <span><strong>{dreamfaceReady}</strong> sẵn sàng</span>
+          <span><strong>{dreamfaceNeedsLogin}</strong> cần đăng nhập</span>
+        </div>
+        <div className="dreamface-pool-actions">
+          <Button disabled={!dreamfaceAccounts.length || Boolean(busy)} busy={busy === "dreamface-all"} onClick={checkDreamfaceAll}><RefreshCw size={14} /> Kiểm tra tất cả</Button>
+          <Button variant="primary" onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace slot"); setModal({ type: "bulk-slots" }); }}><Plus size={15} /> Tạo nhiều profile</Button>
+        </div>
+      </section>
       <div className="account-explainer">
         <span className="explainer-icon">
           <KeyRound size={22} />

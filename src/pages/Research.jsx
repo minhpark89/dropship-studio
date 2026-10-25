@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  BrainCircuit,
   CheckCircle2,
   CircleHelp,
   Download,
@@ -156,28 +155,6 @@ function DreamFacePanel({ data, notify }) {
   );
 }
 
-function LlmSettings({ data, notify }) {
-  const initial = data.settings?.llm || data.settings?.llmSettings || {};
-  const [value, setValue] = useState({ enabled: Boolean(initial.enabled), endpoint: initial.endpoint || "https://api.openai.com/v1", apiKey: "", model: initial.model || "gpt-4o-mini", timeoutSeconds: initial.timeoutSeconds || 90 });
-  const [busy, setBusy] = useState(false);
-  const submit = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      const payload = { ...value };
-      if (!value.apiKey) delete payload.apiKey;
-      await api("/settings/llm", payload, "PATCH");
-      notify("Đã lưu cấu hình LLM trên máy này.");
-      setValue((current) => ({ ...current, apiKey: "" }));
-    } catch (error) {
-      notify(error.message, "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return <section className="research-card llm-card"><div className="research-card-heading"><div><span className="research-kicker">MODEL SETTINGS</span><h2><BrainCircuit size={19} /> LLM endpoint</h2><p>API key chỉ đi vào Store local và không xuất hiện trong state public, event stream hay export.</p></div><span className="research-safe-pill"><KeyRound size={14} /> Local only</span></div><form onSubmit={submit}><div className="research-form-grid"><Field label="Endpoint"><input type="url" required value={value.endpoint} onChange={(event) => setValue((current) => ({ ...current, endpoint: event.target.value }))} /></Field><Field label="Model"><input required maxLength={200} value={value.model} onChange={(event) => setValue((current) => ({ ...current, model: event.target.value }))} /></Field><Field label="API key" hint="Để trống để giữ key đã lưu; key không được hiển thị lại."><input type="password" autoComplete="off" placeholder="••••••••••••" value={value.apiKey} onChange={(event) => setValue((current) => ({ ...current, apiKey: event.target.value }))} /></Field><Field label="Timeout (giây)"><input type="number" min="10" max="300" value={value.timeoutSeconds} onChange={(event) => setValue((current) => ({ ...current, timeoutSeconds: Number(event.target.value) }))} /></Field></div><label className="research-check"><input type="checkbox" checked={value.enabled} onChange={(event) => setValue((current) => ({ ...current, enabled: event.target.checked }))} /><span /> Cho phép LLM chọn góc, viết script và gợi ý hình ảnh</label><div className="research-form-actions"><span>Research vẫn dùng được khi endpoint tạm thời không khả dụng.</span><Button type="submit" variant="primary" busy={busy}><CheckCircle2 size={15} /> Lưu cấu hình</Button></div></form></section>;
-}
-
 export function ResearchPage({ data, project, notify, navigate }) {
   const [results, setResults] = useState(data.researchResults || []);
   const [view, setView] = useState("research");
@@ -283,7 +260,7 @@ export function ResearchPage({ data, project, notify, navigate }) {
       notify(error.message, "error");
     }
   };
-  return <div className="page research-page"><div className="page-heading research-heading"><div><div className="eyebrow">RESEARCH WORKSPACE</div><h1>Từ chủ đề đến góc kể chuyện.</h1><p>Thu thập nguồn, chọn angle và chuẩn bị script trong phạm vi dự án <strong>{project.name}</strong>.</p></div><div className="research-heading-mark"><Newspaper size={20} /><span>{projectResults.length} kết quả</span></div></div><div className="research-tabs research-primary-tabs"><button className={view === "research" ? "active" : ""} onClick={() => setView("research")}><Search size={15} /> Research</button><button className={view === "dreamface" ? "active" : ""} onClick={() => setView("dreamface")}><Sparkles size={15} /> DreamFace</button><button className={view === "llm" ? "active" : ""} onClick={() => setView("llm")}><BrainCircuit size={15} /> LLM settings</button></div>{view === "research" && <><section className="research-card research-run-card"><div className="research-card-heading"><div><span className="research-kicker">EDITORIAL INPUT</span><h2><Search size={19} /> Nghiên cứu chủ đề</h2><p>RSS/Atom được giới hạn và deduplicate trước khi tổng hợp.</p></div><span className="research-step"><span>01</span> INPUT</span></div><ResearchForm project={project} onResult={onResult} notify={notify} /></section><section className="research-results"><div className="research-section-heading"><div><span className="research-kicker">PROJECT RESULTS</span><h2>Kết quả gần đây</h2></div>{projectResults.length > 0 && <span>{projectResults.length} bản ghi</span>}</div>{projectResults.length ? projectResults.map((result) => <ResultCard key={result.id} result={result} onImport={importImages} importing={importing === result.id} onUse={useScript} onDreamFace={createDreamFaceVideo} dreaming={dreaming === result.id} onAssemble={assembleImages} onSearchImages={searchImages} searchingImages={searchingImages === result.id} onImportSearchImages={importSearchImages} importingSearchImages={importingSearchImages === result.id} />) : <Empty icon={Newspaper} title="Chưa có research nào">Nhập một chủ đề để tạo bản ghi đầu tiên cho dự án này.</Empty>}</section></>}{view === "dreamface" && <DreamFacePanel data={data} notify={notify} />}{view === "llm" && <LlmSettings data={data} notify={notify} />}</div>;
+  return <div className="page research-page"><div className="page-heading research-heading"><div><div className="eyebrow">RESEARCH WORKSPACE</div><h1>Từ chủ đề đến góc kể chuyện.</h1><p>Thu thập nguồn, chọn angle và chuẩn bị script trong phạm vi dự án <strong>{project.name}</strong>.</p></div><div className="research-heading-mark"><Newspaper size={20} /><span>{projectResults.length} kết quả</span></div></div><div className="research-tabs research-primary-tabs"><button className={view === "research" ? "active" : ""} onClick={() => setView("research")}><Search size={15} /> Research</button><button className={view === "dreamface" ? "active" : ""} onClick={() => setView("dreamface")}><Sparkles size={15} /> DreamFace</button></div>{view === "research" && <><section className="research-card research-run-card"><div className="research-card-heading"><div><span className="research-kicker">EDITORIAL INPUT</span><h2><Search size={19} /> Nghiên cứu chủ đề</h2><p>RSS/Atom được giới hạn và deduplicate trước khi tổng hợp.</p></div><span className="research-step"><span>01</span> INPUT</span></div><ResearchForm project={project} onResult={onResult} notify={notify} /></section><section className="research-results"><div className="research-section-heading"><div><span className="research-kicker">PROJECT RESULTS</span><h2>Kết quả gần đây</h2></div>{projectResults.length > 0 && <span>{projectResults.length} bản ghi</span>}</div>{projectResults.length ? projectResults.map((result) => <ResultCard key={result.id} result={result} onImport={importImages} importing={importing === result.id} onUse={useScript} onDreamFace={createDreamFaceVideo} dreaming={dreaming === result.id} onAssemble={assembleImages} onSearchImages={searchImages} searchingImages={searchingImages === result.id} onImportSearchImages={importSearchImages} importingSearchImages={importingSearchImages === result.id} />) : <Empty icon={Newspaper} title="Chưa có research nào">Nhập một chủ đề để tạo bản ghi đầu tiên cho dự án này.</Empty>}</section></>}{view === "dreamface" && <DreamFacePanel data={data} notify={notify} />}</div>;
 }
 
 export const Research = ResearchPage;

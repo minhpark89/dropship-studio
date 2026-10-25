@@ -349,6 +349,9 @@ export function SettingsPage({ data, project, run, notify }) {
   const [licenseToken, setLicenseToken] = useState("");
   const [name, setName] = useState(project.name);
   const [busy, setBusy] = useState(false);
+  const [modelOptions, setModelOptions] = useState([]);
+  const [modelsBusy, setModelsBusy] = useState(false);
+  const [modelsError, setModelsError] = useState("");
   const check = async () => {
     setBusy(true);
     const [nextHealth, nextLicense] = await Promise.all([
@@ -362,6 +365,29 @@ export function SettingsPage({ data, project, run, notify }) {
   useEffect(() => {
     check();
   }, []);
+  const loadModels = async (silent = false) => {
+    const llm = settings.llm || {};
+    if (!llm.endpoint) return;
+    setModelsBusy(true);
+    setModelsError("");
+    try {
+      const result = await api("/settings/llm/models", {
+        endpoint: llm.endpoint,
+        apiKey: llm.apiKey === "[đã lưu]" ? "" : llm.apiKey || "",
+      });
+      setModelOptions(result.models || []);
+      if (!llm.model && result.models?.[0]) setSettings((current) => ({ ...current, llm: { ...(current.llm || {}), model: result.models[0] } }));
+    } catch (error) {
+      setModelsError(error.message);
+      if (!silent) notify(error.message, "error");
+    } finally {
+      setModelsBusy(false);
+    }
+  };
+  useEffect(() => {
+    const timer = setTimeout(() => loadModels(true), 350);
+    return () => clearTimeout(timer);
+  }, [settings.llm?.endpoint]);
   return (
     <div className="page settings-page">
       <div className="page-heading">
@@ -645,18 +671,18 @@ export function SettingsPage({ data, project, run, notify }) {
                   }
                 />
               </Field>
-              <Field label="Model">
-                <input
-                  required
-                  value={settings.llm?.model || ""}
-                  placeholder="gpt-4o-mini / llama3.2"
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      llm: { ...(current.llm || {}), model: event.target.value },
-                    }))
-                  }
-                />
+              <Field label="Model" hint={modelsError || (modelOptions.length ? `${modelOptions.length} model từ endpoint` : "Endpoint sẽ tự tải danh sách model") }>
+                <div className="settings-model-picker">
+                  <select
+                    required
+                    value={settings.llm?.model || ""}
+                    onChange={(event) => setSettings((current) => ({ ...current, llm: { ...(current.llm || {}), model: event.target.value } }))}
+                  >
+                    {settings.llm?.model && !modelOptions.includes(settings.llm.model) && <option value={settings.llm.model}>{settings.llm.model} · hiện tại</option>}
+                    {modelOptions.length ? modelOptions.map((model) => <option key={model} value={model}>{model}</option>) : <option value={settings.llm?.model || ""}>{settings.llm?.model || "Đang tải model…"}</option>}
+                  </select>
+                  <Button type="button" onClick={() => loadModels(false)} busy={modelsBusy}>Tải model</Button>
+                </div>
               </Field>
             </div>
             <div className="form-grid">

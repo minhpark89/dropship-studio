@@ -73,7 +73,7 @@ export async function renderTimeline(store, job, signal, progress) {
     "-c:v",
     "libx264",
     "-preset",
-    "veryfast",
+    timeline.quality === "draft" ? "ultrafast" : "veryfast",
     "-crf",
     String(crf),
     "-pix_fmt",

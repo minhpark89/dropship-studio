@@ -24,7 +24,7 @@ import { Button, Modal, Field, Notice } from "./components.jsx";
 import { CreatePage, StoryboardPage } from "./pages/Create.jsx";
 import { AccountsPage } from "./pages/Accounts.jsx";
 import { LibraryPage } from "./pages/Library.jsx";
-import { EditorPage } from "./pages/Editor.jsx";
+import { RenderPage } from "./pages/Render.jsx";
 import { QueuePage, SettingsPage } from "./pages/Manage.jsx";
 import { SocialPage } from "./pages/Social.jsx";
 import { ResearchPage } from "./pages/Research.jsx";
@@ -34,7 +34,7 @@ import { ProductPage } from "./pages/Product.jsx";
 import "./style.css";
 import "./pages/workspace.css";
 
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
 
 const tabs = [
   ["research", "Research & News", Search],
@@ -59,7 +59,7 @@ const pages = {
   storyboard: StoryboardPage,
   accounts: AccountsPage,
   library: LibraryPage,
-  editor: EditorPage,
+  editor: RenderPage,
   queue: QueuePage,
   settings: SettingsPage,
   social: SocialPage,

@@ -939,6 +939,24 @@ nav button b {
   border: 1px solid #3e5032;
   border-radius: 10px;
 }
+.dreamface-pool {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) auto auto;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid #4b4562;
+  border-radius: 13px;
+  background: linear-gradient(110deg, #24263c, #202432);
+}
+.dreamface-pool-copy h3 { margin: 5px 0 4px; color: #f1f4ff; font-size: 15px; }
+.dreamface-pool-copy p { margin: 0; color: #9da9c3; font-size: 11px; line-height: 1.55; }
+.dreamface-pool-copy strong { color: #ffc18c; }
+.dreamface-pool-stats { display: flex; gap: 13px; color: #9da9c3; font-size: 10px; white-space: nowrap; }
+.dreamface-pool-stats span { display: grid; gap: 3px; }
+.dreamface-pool-stats strong { color: #f2c18f; font-size: 18px; }
+.dreamface-pool-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.dreamface-pool-actions .button { font-size: 11px; }
 .explainer-icon {
   width: 40px;
   height: 40px;
@@ -2400,6 +2418,11 @@ nav button b {
     padding: 15px;
     gap: 10px;
   }
+  .dreamface-pool {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .dreamface-pool-actions { justify-content: flex-start; }
   .explainer-icon {
     display: none;
   }
@@ -2571,6 +2594,19 @@ nav button.active {
   gap: 9px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+.settings-model-picker {
+  display: flex;
+  align-items: stretch;
+  gap: 7px;
+}
+.settings-model-picker select {
+  flex: 1;
+  min-width: 0;
+}
+.settings-model-picker .button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .eyebrow {
   color: #b8d995;

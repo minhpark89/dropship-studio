@@ -16,6 +16,7 @@ import {
   Scissors,
   ArrowUpRight,
   Volume2,
+  Zap,
 } from "lucide-react";
 import { durationOf } from "../../shared/contracts.js";
 import { api, uid, clipFrom, timecode } from "../api.js";
@@ -48,7 +49,7 @@ function Numeric({ label, value, onChange, min = 0, max, step = 0.1 }) {
   );
 }
 
-export function EditorPage({ data, project, run, notify, navigate }) {
+export function EditorPage({ data, project, run, notify, navigate, renderKind = "news" }) {
   const [timeline, setTimeline] = useState(structuredClone(project.timeline));
   const timelineRef = useRef(timeline);
   timelineRef.current = timeline;
@@ -61,7 +62,7 @@ export function EditorPage({ data, project, run, notify, navigate }) {
   const [history, setHistory] = useState({ past: [], future: [] });
   const [tab, setTab] = useState("media");
   const [modal, setModal] = useState(null);
-  const [name, setName] = useState(`${project.name} - final`);
+  const [name, setName] = useState(`${project.name} - ${renderKind === "product" ? "product" : "news"}`);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [saved, setSaved] = useState(true);
@@ -252,11 +253,24 @@ export function EditorPage({ data, project, run, notify, navigate }) {
   };
   const setGlobal = (key, value) =>
     change((draft) => ({ ...draft, [key]: value }));
+  const queueRender = async (fast = false) => {
+    setExporting(true);
+    if (await save()) {
+      const exportTimeline = fast ? { ...timeline, resolution: 480, quality: "draft", fps: 30 } : timeline;
+      const result = await run(() => api("/jobs/render", { projectId: project.id, name, timeline: exportTimeline }));
+      if (result) {
+        notify(fast ? "Đã thêm render nhanh vào hàng đợi." : "Đã thêm tác vụ xuất video.");
+        setModal(null);
+        navigate("queue");
+      }
+    }
+    setExporting(false);
+  };
   return (
     <div className="editor-page">
       <div className="editor-heading">
         <div>
-          <div className="eyebrow">VIDEO EDITOR</div>
+          <div className="eyebrow">{renderKind === "product" ? "PRODUCT RENDER" : "NEWS RENDER"}</div>
           <h1>Dựng câu chuyện của bạn.</h1>
         </div>
         <div className="inline-actions">
@@ -276,6 +290,10 @@ export function EditorPage({ data, project, run, notify, navigate }) {
           >
             <Download size={16} />
             Xuất video
+          </Button>
+          <Button disabled={!timeline.clips.length || exporting} onClick={() => queueRender(true)} title="480p draft, tốc độ cao">
+            <Zap size={15} />
+            Xuất nhanh
           </Button>
         </div>
       </div>
@@ -933,27 +951,9 @@ export function EditorPage({ data, project, run, notify, navigate }) {
         </Modal>
       )}
       {modal === "export" && (
-        <Modal title="Xuất video" onClose={() => setModal(null)}>
+        <Modal title={renderKind === "product" ? "Render video sản phẩm" : "Render video tin tức"} onClose={() => setModal(null)}>
           <form
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setExporting(true);
-              if (await save()) {
-                const result = await run(() =>
-                  api("/jobs/render", {
-                    projectId: project.id,
-                    name,
-                    timeline,
-                  }),
-                );
-                if (result) {
-                  notify("Đã thêm tác vụ xuất video.");
-                  setModal(null);
-                  navigate("queue");
-                }
-              }
-              setExporting(false);
-            }}
+            onSubmit={(event) => { event.preventDefault(); queueRender(false); }}
           >
             <Field label="Tên file">
               <input

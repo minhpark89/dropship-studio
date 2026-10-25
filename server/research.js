@@ -278,6 +278,34 @@ function publicLlmSettings(settings) {
   return { ...parsed, apiKey: parsed.apiKey ? "[đã lưu]" : "" };
 }
 
+function llmModelsUrl(endpoint) {
+  const base = new URL(endpoint);
+  if (!["http:", "https:"].includes(base.protocol) || base.username || base.password)
+    throw new StudioError("Endpoint LLM phải là URL HTTP/HTTPS hợp lệ.", "INVALID_LLM_ENDPOINT");
+  base.search = "";
+  base.hash = "";
+  if (!base.pathname.endsWith("/")) base.pathname += "/";
+  return new URL("models", base);
+}
+
+async function listLlmModels({ endpoint, apiKey = "", timeoutSeconds = 30, fetchImpl }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(3000, Math.min(120000, Number(timeoutSeconds || 30) * 1000)));
+  try {
+    const headers = { accept: "application/json" };
+    if (apiKey && apiKey !== "[đã lưu]") headers.authorization = `Bearer ${apiKey}`;
+    const response = await fetchImpl(llmModelsUrl(endpoint), { headers, signal: controller.signal });
+    if (!response.ok) throw new StudioError(`Không tải được danh sách model (HTTP ${response.status}).`, "LLM_MODELS_FAILED", 502);
+    const body = await response.json();
+    const values = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : [];
+    const models = [...new Set(values.map((item) => typeof item === "string" ? item : item?.id || item?.name || item?.model).filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()))].slice(0, 300);
+    if (!models.length) throw new StudioError("Endpoint không trả về model theo định dạng OpenAI-compatible.", "LLM_MODELS_EMPTY", 502);
+    return { models };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function validateFeedUrls(feeds) {
   return feeds.map((value) => {
     const url = new URL(value);
@@ -355,6 +383,16 @@ export function mountResearchRoutes(app, store, options = {}) {
     store.state.settings.llm = next;
     store.save();
     res.json(publicLlmSettings(next));
+  });
+
+  app.post("/api/settings/llm/models", async (req, res) => {
+    const body = z.object({
+      endpoint: z.string().url(),
+      apiKey: z.string().max(2000).optional(),
+    }).parse(req.body || {});
+    const current = llmSettingsSchema.parse(store.state.settings?.llm || {});
+    const apiKey = body.apiKey === undefined || body.apiKey === "" || body.apiKey === "[đã lưu]" ? current.apiKey : body.apiKey;
+    res.json(await listLlmModels({ endpoint: body.endpoint, apiKey, timeoutSeconds: current.timeoutSeconds, fetchImpl }));
   });
 
   app.get("/api/research", (req, res) => {

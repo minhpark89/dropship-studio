@@ -162,12 +162,23 @@ export class JobQueue {
             (other.profileId || other.id) === (account.profileId || account.id) &&
             ["busy", "checking"].includes(other.status)),
       );
-      const account = accounts.find(
+      const candidates = accounts.filter(
         (item) =>
           (job.payload.accountId === "auto" ||
             item.id === job.payload.accountId) &&
           !generating.some((entry) => entry.profileId === (item.profileId || item.id)),
       );
+      // DreamFace jobs can use the whole local pool. Pick the least recently
+      // used profile so a batch naturally rotates across the saved profiles.
+      // An explicit accountId keeps the existing deterministic choice.
+      const account = candidates.sort((left, right) => {
+        if (job.payload.provider !== "dreamface" || job.payload.accountId !== "auto") return 0;
+        const leftUsed = Date.parse(left.lastUsedAt || "") || 0;
+        const rightUsed = Date.parse(right.lastUsedAt || "") || 0;
+        return leftUsed - rightUsed ||
+          Number(left.rotationIndex || 0) - Number(right.rotationIndex || 0) ||
+          left.id.localeCompare(right.id);
+      })[0];
       if (!account) continue;
       this.start(job, account);
     }
@@ -254,7 +265,10 @@ export class JobQueue {
       }
     } finally {
       if (account?.status === "busy")
-        this.store.patch("accounts", account.id, { status: "ready" });
+        this.store.patch("accounts", account.id, {
+          status: "ready",
+          lastUsedAt: new Date().toISOString(),
+        });
     }
     // Assembly has its own failed render job. A downloaded AI asset remains
     // completed even when validation or export subsequently fails.

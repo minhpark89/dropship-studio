@@ -100,6 +100,29 @@ test("research uses an OpenAI-compatible JSON response and redacts settings", as
   assert.equal(store.state.settings.llm.apiKey, "secret-token");
 });
 
+test("LLM settings can discover models from an OpenAI-compatible endpoint", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return new Response(JSON.stringify({ data: [{ id: "qwen2.5" }, { id: "gpt-4.1-mini" }] }), {
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const { request } = await fixture({
+    fetchImpl,
+    llm: { apiKey: "stored-key", endpoint: "http://127.0.0.1:11434/v1", model: "qwen2.5" },
+  });
+  const response = await request("/api/settings/llm/models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endpoint: "http://127.0.0.1:11434/v1" }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await json(response)).models, ["qwen2.5", "gpt-4.1-mini"]);
+  assert.equal(calls[0].url, "http://127.0.0.1:11434/v1/models");
+  assert.equal(calls[0].options.headers.authorization, "Bearer stored-key");
+});
+
 test("research can call a local OpenAI-compatible endpoint without an API key", async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {

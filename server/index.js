@@ -131,7 +131,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       tools: await checkTools(store.state.settings),
       browser,
       dataDir: store.root,
-      version: "0.2.0",
+      version: "0.3.0",
     });
   });
 

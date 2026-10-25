@@ -71,6 +71,60 @@ test("DreamFace generation is routed through its authenticated provider runner",
   assert.equal(job.mediaId, "dreamface-media");
 });
 
+test("automatic DreamFace selection rotates by least recently used profile", async (t) => {
+  const store = new Store(path.resolve(".verification", `queue-dreamface-rotation-${randomUUID()}`));
+  const project = store.createProject("DreamFace rotation verification");
+  const older = store.add("accounts", {
+    name: "DreamFace older",
+    provider: "dreamface",
+    status: "ready",
+    rotationIndex: 2,
+    lastUsedAt: "2020-01-01T00:00:00.000Z",
+  });
+  const newer = store.add("accounts", {
+    name: "DreamFace newer",
+    provider: "dreamface",
+    status: "ready",
+    rotationIndex: 1,
+    lastUsedAt: "2021-01-01T01:00:00.000Z",
+  });
+  const calls = [];
+  const queue = new JobQueue(store, null, {
+    intervalMs: 0,
+    generateDreamFace: async (_store, _job, account) => {
+      calls.push(account.id);
+      return { id: `media-${account.id}` };
+    },
+  });
+  t.after(() => queue.close());
+  const [first] = queue.enqueueGeneration({
+    projectId: project.id,
+    provider: "dreamface",
+    accountId: "auto",
+    model: "DreamFace video",
+    duration: 5,
+    ratio: "9:16",
+    prompts: ["First rotation"],
+  });
+  queue.tick();
+  await until(() => queue.running.size === 0);
+  const [second] = queue.enqueueGeneration({
+    projectId: project.id,
+    provider: "dreamface",
+    accountId: "auto",
+    model: "DreamFace video",
+    duration: 5,
+    ratio: "9:16",
+    prompts: ["Second rotation"],
+  });
+  queue.tick();
+  await until(() => queue.running.size === 0);
+  assert.deepEqual(calls, [older.id, newer.id]);
+  assert.equal(first.status, "completed");
+  assert.equal(second.status, "completed");
+  assert.ok(store.require("accounts", older.id).lastUsedAt);
+});
+
 test("pause, persisted schedules, concurrency and per-account serialization", async (t) => {
   const { store, project, accounts } = fixture();
   let now = Date.parse("2030-01-01T00:00:00Z");
