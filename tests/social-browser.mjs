@@ -85,11 +85,11 @@ try {
   await page.locator('[role="dialog"]').getByRole("button").filter({ hasText: "Đóng" }).click().catch(() => {});
   await libraryTab.click();
   await page.locator(".media-card").first().waitFor();
-  await page.locator(".media-card").first().getByRole("button", { name: /So/ }).click();
-  await page.locator(".social-page").waitFor();
-  await page.locator('[role="dialog"]').filter({ hasText: "Tạo bài" }).waitFor();
+  await page.locator(".media-card").first().getByRole("button", { name: /Soạn Content/ }).click();
+  await page.locator(".content-hub").waitFor();
+  await page.locator('[role="dialog"]').filter({ hasText: "Soạn Content" }).waitFor();
   assert.equal(await page.locator('[role="dialog"] select[name="mediaId"]').inputValue(), media.id);
-  report.checks.push("Library → Soạn bài handoff mở đúng Page và media");
+  report.checks.push("Library → Soạn Content handoff mở đúng Page và media");
 
   await page.locator('[role="dialog"]').getByRole("button").filter({ hasText: "Hủy" }).click();
   await page.setViewportSize({ width: 390, height: 844 });

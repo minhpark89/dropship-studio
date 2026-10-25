@@ -67,6 +67,7 @@
 .content-card-media > img, .content-card-media > video { width: 100%; height: 100%; min-height: 184px; object-fit: cover; }
 .content-media-fallback { display: grid; place-items: center; min-height: 184px; color: #6782aa; background: linear-gradient(145deg, #142440, #0e1829); }
 .content-card-type { position: absolute; top: 10px; left: 10px; }
+.content-render-badge { position: absolute; right: 10px; bottom: 10px; padding: 5px 7px; border: 1px solid #bdf16866; border-radius: 999px; color: #d7ff9b; background: #1c321dd9; font-size: 9px; font-weight: 800; letter-spacing: .08em; }
 .content-type-badge { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 1px solid #ffffff22; border-radius: 999px; color: #fff; background: #0d172acc; font-size: 9px; font-weight: 800; letter-spacing: .1em; }
 .content-type-badge i { width: 5px; height: 5px; border-radius: 50%; background: var(--hub-orange); }
 .content-type-badge.news i { background: #73b5ff; }

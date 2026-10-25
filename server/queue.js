@@ -173,6 +173,10 @@ export class JobQueue {
       // An explicit accountId keeps the existing deterministic choice.
       const account = candidates.sort((left, right) => {
         if (job.payload.provider !== "dreamface" || job.payload.accountId !== "auto") return 0;
+        const rotationDay = new Date().toISOString().slice(0, 10);
+        const leftUsedToday = left.rotationEnabled !== false && left.rotationDay === rotationDay ? 1 : 0;
+        const rightUsedToday = right.rotationEnabled !== false && right.rotationDay === rotationDay ? 1 : 0;
+        if (leftUsedToday !== rightUsedToday) return leftUsedToday - rightUsedToday;
         const leftUsed = Date.parse(left.lastUsedAt || "") || 0;
         const rightUsed = Date.parse(right.lastUsedAt || "") || 0;
         return leftUsed - rightUsed ||
@@ -268,6 +272,9 @@ export class JobQueue {
         this.store.patch("accounts", account.id, {
           status: "ready",
           lastUsedAt: new Date().toISOString(),
+          ...(account.provider === "dreamface" && account.rotationEnabled !== false
+            ? { rotationDay: new Date().toISOString().slice(0, 10), rotationMode: account.rotationMode || "daily" }
+            : {}),
         });
     }
     // Assembly has its own failed render job. A downloaded AI asset remains

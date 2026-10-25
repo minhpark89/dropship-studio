@@ -30,7 +30,7 @@ export function AccountsPage({ data, run, notify }) {
   const [busy, setBusy] = useState("");
   const [filter, setFilter] = useState("all");
   const [slotCount, setSlotCount] = useState(5);
-  const [slotPrefix, setSlotPrefix] = useState("DreamFace slot");
+  const [slotPrefix, setSlotPrefix] = useState("DreamFace profile");
   const accounts = data.accounts.filter(
     (account) => filter === "all" || account.provider === filter,
   );
@@ -91,7 +91,7 @@ export function AccountsPage({ data, run, notify }) {
     }));
     setBusy("");
     if (result) {
-      notify(`Đã tạo ${result.created} DreamFace slot local. Nhập email của bạn ở từng slot để hoàn tất xác minh.`);
+      notify(`Đã tạo ${result.created} profile DreamFace local. Nhập email của bạn ở từng profile để hoàn tất xác minh.`);
       close();
     }
   };
@@ -101,9 +101,9 @@ export function AccountsPage({ data, run, notify }) {
         <div>
           <div className="eyebrow">ACCOUNT WORKSPACE</div>
           <h1>Tài khoản của bạn.</h1>
-          <p>Kết nối Dola và Google Flow bằng phiên đăng nhập trên máy này.</p>
+          <p>Quản lý các profile AI trên máy này, gồm DreamFace để render và xoay vòng theo ngày.</p>
         </div>
-        <div className="account-heading-actions"><Button onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace slot"); setModal({ type: "bulk-slots" }); }}><Plus size={16} /> Tạo slot xoay vòng</Button><Button
+        <div className="account-heading-actions"><Button onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setModal({ type: "bulk-slots" }); }}><Plus size={16} /> Tạo profile xoay vòng</Button><Button
           variant="primary"
           onClick={() => {
             setForm({
@@ -124,7 +124,7 @@ export function AccountsPage({ data, run, notify }) {
         <div className="dreamface-pool-copy">
           <div className="eyebrow">DREAMFACE POOL</div>
           <h3>{dreamfaceAccounts.length ? `${dreamfaceAccounts.length} profile đang quản lý` : "Tạo pool DreamFace"}</h3>
-          <p>Chọn <strong>Tự chọn</strong> khi render, app sẽ dùng profile sẵn sàng ít dùng gần đây nhất rồi xoay sang profile kế tiếp.</p>
+          <p>Chọn <strong>Tự chọn</strong> khi render. App ưu tiên profile chưa dùng trong ngày, sau đó xoay theo lượt ít dùng gần đây nhất.</p>
         </div>
         <div className="dreamface-pool-stats">
           <span><strong>{dreamfaceReady}</strong> sẵn sàng</span>
@@ -132,7 +132,7 @@ export function AccountsPage({ data, run, notify }) {
         </div>
         <div className="dreamface-pool-actions">
           <Button disabled={!dreamfaceAccounts.length || Boolean(busy)} busy={busy === "dreamface-all"} onClick={checkDreamfaceAll}><RefreshCw size={14} /> Kiểm tra tất cả</Button>
-          <Button variant="primary" onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace slot"); setModal({ type: "bulk-slots" }); }}><Plus size={15} /> Tạo nhiều profile</Button>
+          <Button variant="primary" onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setModal({ type: "bulk-slots" }); }}><Plus size={15} /> Tạo nhiều profile</Button>
         </div>
       </section>
       <div className="account-explainer">
@@ -197,7 +197,7 @@ export function AccountsPage({ data, run, notify }) {
                   {account.provider === "dola"
                     ? "Dola / Seedance"
                     : account.provider === "dreamface"
-                      ? "DreamFace"
+                      ? "DreamFace · xoay ngày"
                       : "Google Flow / Veo"}
                 </span>
                 {sharedProfile(account) && <span>Hồ sơ Google dùng chung</span>}
@@ -456,17 +456,17 @@ export function AccountsPage({ data, run, notify }) {
         </Modal>
       )}
       {modal?.type === "bulk-slots" && (
-        <Modal title="Tạo slot DreamFace xoay vòng" onClose={close}>
+        <Modal title="Tạo profile DreamFace xoay vòng" onClose={close}>
           <form onSubmit={createSlots}>
             <Notice>
-              Slot là profile local để dùng luân phiên trong các ngày sau. Studio không tự tạo email bên ngoài, không đăng ký tài khoản thay bạn và không vượt CAPTCHA/MFA; mỗi slot vẫn cần email, mật khẩu hoặc cookie do bạn sở hữu.
+              Profile được tạo local để dùng luân phiên trong các ngày sau. Studio không tự tạo email bên ngoài, không đăng ký tài khoản thay bạn và không vượt CAPTCHA/MFA; mỗi profile vẫn cần email, mật khẩu hoặc cookie do bạn sở hữu.
             </Notice>
             <div className="form-grid">
               <Field label="Số lượng slot"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
               <Field label="Tiền tố tên"><input maxLength="80" value={slotPrefix} onChange={(event) => setSlotPrefix(event.target.value)} /></Field>
             </div>
-            <Field label="Cách dùng" hint="Sau khi tạo, lọc DreamFace trong danh sách account rồi đăng nhập từng slot khi cần. Hàng đợi tự chọn profile ready khi để Auto.">
-              <input value="Auto rotation · account ready" readOnly />
+            <Field label="Cách dùng" hint="Sau khi tạo, lọc DreamFace trong danh sách rồi đăng nhập từng profile. Khi render để Tự chọn, hàng đợi sẽ ưu tiên profile chưa dùng trong ngày.">
+              <input value="Daily rotation · profile ready" readOnly />
             </Field>
             <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" busy={busy === "bulk-slots"}><Plus size={15} /> Tạo {slotCount} slot</Button></div>
           </form>

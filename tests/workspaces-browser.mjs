@@ -61,7 +61,7 @@ try {
   assert.equal(await page.locator(".editor-heading .eyebrow").innerText(), "NEWS RENDER");
   report.checks.push("Render workspace switches between News and Product without leaving the project");
   await page.getByRole("button", { name: "Tài khoản", exact: true }).click();
-  await page.getByRole("button", { name: "Tạo slot xoay vòng" }).click();
+  await page.getByRole("button", { name: "Tạo profile xoay vòng" }).click();
   const slots = page.locator('[role="dialog"]');
   await slots.locator('input[type="number"]').fill("3");
   await slots.getByRole("button", { name: "Tạo 3 slot" }).click();

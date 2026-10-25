@@ -6,11 +6,13 @@ import { StudioError } from "./store.js";
 const GRAPH_VERSION = "v26.0";
 const accessTokenSchema = z.string().trim().min(10).max(5000);
 const pageIdSchema = z.string().regex(/^\d{1,40}$/);
-const tokenKindSchema = z.enum(["USER", "SYSTEM_USER"]);
+const tokenKindSchema = z.enum(["USER", "SYSTEM_USER", "VIA_TOKEN"]);
+const appIdSchema = z.string().trim().min(1).max(200);
+const appSecretSchema = z.string().trim().min(1).max(5000);
 
-function safeMessage(value, token = "") {
+function safeMessage(value, ...secrets) {
   const message = String(value || "Meta request failed");
-  return token ? message.split(token).join("[redacted]") : message;
+  return secrets.filter(Boolean).reduce((current, secret) => current.split(String(secret)).join("[redacted]"), message);
 }
 
 function publicPage(page) {
@@ -41,6 +43,8 @@ function publicToken(token) {
     name: token.name || token.id,
     ownerName: token.ownerName || "",
     kind: token.kind || "USER",
+    appId: token.appId || "",
+    hasAppSecret: Boolean(token.appSecret),
     status: token.status || "UNKNOWN",
     errorMessage: token.errorMessage || "",
     note: token.note || "",
@@ -110,12 +114,13 @@ function graphEndpoint(graphBase, version, path, params = {}) {
   return url;
 }
 
-async function jsonResponse(response, token) {
+async function jsonResponse(response, token, extraSecrets = []) {
   let body = null;
   try { body = await response.json(); } catch { body = null; }
   if (!response.ok || body?.error) {
     const message = body?.error?.message || `Meta Graph HTTP ${response.status}`;
-    throw new StudioError(safeMessage(message, token), "META_GRAPH_ERROR", response.status >= 400 && response.status < 600 ? 502 : 502);
+    const redacted = [token, ...extraSecrets].filter(Boolean).reduce((value, secret) => safeMessage(value, secret), message);
+    throw new StudioError(redacted, "META_GRAPH_ERROR", response.status >= 400 && response.status < 600 ? 502 : 502);
   }
   return body || {};
 }
@@ -143,6 +148,17 @@ export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "ht
   return {
     me: (token) => request({ token, path: "me", params: { fields: "id,name" } }),
     pages: (token) => request({ token, path: "me/accounts", params: { fields: "id,name,access_token,tasks" } }),
+    debugToken: async ({ token, appId, appSecret }) => {
+      const appAccessToken = `${appId}|${appSecret}`;
+      const url = graphEndpoint(graphBase, graphVersion, "debug_token", {
+        input_token: token,
+        access_token: appAccessToken,
+      });
+      const response = await fetchImpl(url, {
+        headers: { accept: "application/json" },
+      });
+      return jsonResponse(response, token, [appSecret, appAccessToken]);
+    },
     startReel: ({ token, pageId, fileSize }) => request({
       token,
       path: `${pageId}/video_reels`,
@@ -197,7 +213,7 @@ function metaState(store) {
   return meta;
 }
 
-function upsertToken(meta, accessToken, { user = null, pages = [] } = {}) {
+function upsertToken(meta, accessToken, { user = null, pages = [], appId = "", appSecret = "" } = {}) {
   const token = String(accessToken || "").trim();
   const existing = meta.tokens.find((item) => item.token === token);
   const timestamp = new Date().toISOString();
@@ -212,6 +228,8 @@ function upsertToken(meta, accessToken, { user = null, pages = [] } = {}) {
     name: entry.name || user?.name || `Token ${meta.tokens.length + 1}`,
     ownerName: user?.name || entry.ownerName || "",
     kind: entry.kind || "USER",
+    appId: appId || entry.appId || "",
+    appSecret: appSecret || entry.appSecret || "",
     token,
     status: "ACTIVE",
     errorMessage: "",
@@ -226,6 +244,21 @@ function upsertToken(meta, accessToken, { user = null, pages = [] } = {}) {
   if (!existing) meta.tokens.push(entry);
   meta.activeTokenId = entry.id;
   return entry;
+}
+
+async function validateViaToken(client, { token, appId, appSecret }) {
+  if (typeof client.debugToken !== "function") {
+    throw new StudioError("Meta client chưa hỗ trợ kiểm tra Via token.", "META_VIA_TOKEN_UNSUPPORTED", 502);
+  }
+  const debug = await client.debugToken({ token, appId, appSecret });
+  const data = debug?.data || {};
+  if (data.is_valid !== true) {
+    throw new StudioError("Via token không hợp lệ hoặc đã hết hạn.", "META_VIA_TOKEN_INVALID", 401);
+  }
+  if (data.app_id && String(data.app_id) !== String(appId)) {
+    throw new StudioError("App ID không khớp với Via token.", "META_VIA_TOKEN_APP_MISMATCH", 400);
+  }
+  return data;
 }
 
 function syncPages(meta, tokenEntry, pages) {
@@ -377,7 +410,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     } catch (error) {
       if (selected) {
         selected.status = "ERROR";
-        selected.errorMessage = safeMessage(error.message, token);
+        selected.errorMessage = safeMessage(error.message, token, selected.appSecret);
         selected.lastChecked = new Date().toISOString();
         store.save();
       }
@@ -448,6 +481,13 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
   app.post(["/api/meta/tokens", "/api/tokens"], async (req, res) => {
     const accessToken = accessTokenSchema.parse(req.body?.accessToken || req.body?.token);
     const kind = tokenKindSchema.parse(req.body?.kind || "USER");
+    const credentials = kind === "VIA_TOKEN"
+      ? {
+        appId: appIdSchema.parse(req.body?.appId),
+        appSecret: appSecretSchema.parse(req.body?.appSecret),
+      }
+      : { appId: "", appSecret: "" };
+    if (kind === "VIA_TOKEN") await validateViaToken(client, { token: accessToken, ...credentials });
     const user = await client.me(accessToken);
     const pageResponse = await client.pages(accessToken);
     const pages = Array.isArray(pageResponse?.data) ? pageResponse.data.filter((page) => pageIdSchema.safeParse(String(page.id)).success).map((page) => ({
@@ -455,9 +495,11 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     })) : [];
     if (!pages.length) throw new StudioError("Meta không trả về Page có quyền quản lý.", "META_NO_PAGES", 409);
     const meta = metaState(store);
-    const entry = upsertToken(meta, accessToken, { user, pages });
+    const entry = upsertToken(meta, accessToken, { user, pages, ...credentials });
     entry.name = String(req.body?.name || entry.name).trim().slice(0, 120) || entry.name;
     entry.kind = kind;
+    entry.appId = kind === "VIA_TOKEN" ? credentials.appId : "";
+    entry.appSecret = kind === "VIA_TOKEN" ? credentials.appSecret : "";
     entry.note = String(req.body?.note || entry.note || "").slice(0, 2000);
     entry.userId = String(user.id || entry.userId || "");
     meta.activeTokenId = entry.id;
@@ -475,11 +517,14 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     let user;
     let response;
     try {
+      if (entry.kind === "VIA_TOKEN") {
+        await validateViaToken(client, { token: entry.token, appId: entry.appId, appSecret: entry.appSecret });
+      }
       user = await client.me(entry.token);
       response = await client.pages(entry.token);
     } catch (error) {
       entry.status = "ERROR";
-      entry.errorMessage = safeMessage(error.message, entry.token);
+      entry.errorMessage = safeMessage(error.message, entry.token, entry.appSecret);
       entry.lastChecked = new Date().toISOString();
       store.save();
       throw error;

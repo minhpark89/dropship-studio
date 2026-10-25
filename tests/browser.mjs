@@ -15,6 +15,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+page.on('response', (response) => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });
 page.on('dialog', (dialog) => dialog.accept());
 const nav = async (name) => {
   await page.locator('nav').getByRole('button', { name, exact: true }).click();
@@ -119,6 +120,13 @@ try {
   await page.getByRole('button', { name: 'Lưu cài đặt' }).click();
   await page.waitForTimeout(300);
   assert.equal(studio.store.state.settings.concurrency, 3);
+  await page.getByLabel('URL Store', { exact: true }).fill('https://store.example.test');
+  await page.getByLabel('URL website bài viết', { exact: true }).fill('https://news.example.test');
+  await page.getByLabel('First Comment Product mặc định', { exact: true }).fill('Xem sản phẩm tại: {{link}}');
+  await page.getByRole('button', { name: 'Lưu Content defaults', exact: true }).click();
+  await page.waitForTimeout(300);
+  assert.equal(studio.store.state.settings.content.storeUrl, 'https://store.example.test');
+  assert.equal(studio.store.state.settings.content.articleWebsiteUrl, 'https://news.example.test');
   await page.reload();
   await page.getByRole('heading', { name: 'Bắt đầu bằng một ý tưởng.' }).waitFor();
   await nav('Dựng video');

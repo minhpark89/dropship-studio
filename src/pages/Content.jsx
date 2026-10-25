@@ -24,7 +24,10 @@ const statusNames = {
   published: "Đã đăng",
 };
 
-const emptyPost = (projectId, pageId = "", contentType = "product") => ({
+const emptyPost = (projectId, pageId = "", contentType = "product", defaults = {}) => {
+  const linkUrl = contentType === "news" ? defaults.articleWebsiteUrl || "" : defaults.storeUrl || "";
+  const commentTemplate = contentType === "news" ? defaults.newsFirstCommentTemplate || "" : defaults.productFirstCommentTemplate || "";
+  return {
   projectId,
   pageId,
   pageGroupId: "",
@@ -32,15 +35,16 @@ const emptyPost = (projectId, pageId = "", contentType = "product") => ({
   contentType,
   title: "",
   caption: "",
-  firstComment: "",
-  linkUrl: "",
-  linkLabel: contentType === "news" ? "Đọc bài đầy đủ" : "Xem sản phẩm",
+  firstComment: commentTemplate.replaceAll("{{link}}", linkUrl),
+  linkUrl,
+  linkLabel: contentType === "news" ? defaults.articleLinkLabel || "Đọc bài đầy đủ" : defaults.storeLinkLabel || "Xem sản phẩm",
   sourceUrl: "",
   mediaIds: [],
   scheduledAt: null,
   status: "draft",
   notes: "",
-});
+  };
+};
 
 function localDateInput(value) {
   if (!value) return "";
@@ -73,6 +77,7 @@ export function ContentPage({ data, project, notify, navigate }) {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState("");
+  const contentDefaults = data.settings?.content || {};
 
   useEffect(() => {
     setPages(data.socialPages || []);
@@ -82,7 +87,8 @@ export function ContentPage({ data, project, notify, navigate }) {
   const media = useMemo(() => (data.media || [])
     .filter((item) => (item.projectId === project.id || !item.projectId) && ["image", "video"].includes(item.kind))
     .slice()
-    .reverse(), [data.media, project.id]);
+    .sort((left, right) => Number(right.generated) - Number(left.generated) || new Date(right.createdAt || 0) - new Date(left.createdAt || 0)), [data.media, project.id]);
+  const renderedVideos = media.filter((item) => item.kind === "video" && item.generated);
   const activePages = pages.filter((page) => !page.archived);
   const projectPosts = posts
     .filter((post) => post.projectId === project.id)
@@ -117,7 +123,7 @@ export function ContentPage({ data, project, notify, navigate }) {
       navigate?.("pages");
       return;
     }
-    setModal({ mode: "create", post: { ...emptyPost(project.id, activePages[0].id, contentType), mediaIds: mediaId ? [mediaId] : [] } });
+    setModal({ mode: "create", post: { ...emptyPost(project.id, activePages[0].id, contentType, contentDefaults), mediaIds: mediaId ? [mediaId] : [] } });
   };
 
   useEffect(() => {
@@ -127,7 +133,7 @@ export function ContentPage({ data, project, notify, navigate }) {
     let mediaId = handoff;
     try { mediaId = JSON.parse(handoff)?.mediaId || mediaId; } catch { /* plain id */ }
     if (media.some((item) => item.id === mediaId)) openCreate("product", mediaId);
-  }, [media]);
+  }, [media, contentDefaults]);
 
   const savePost = async (event) => {
     event.preventDefault();
@@ -190,7 +196,7 @@ export function ContentPage({ data, project, notify, navigate }) {
       const page = pages.find((item) => item.id === post.pageId);
       const attached = media.find((item) => item.id === post.mediaIds?.[0]);
       return <article className="content-card" key={post.id}>
-        <div className="content-card-media"><PreviewMedia media={attached} /><span className="content-card-type"><TypeBadge type={post.contentType || "product"} /></span></div>
+        <div className="content-card-media"><PreviewMedia media={attached} /><span className="content-card-type"><TypeBadge type={post.contentType || "product"} /></span>{attached?.kind === "video" && attached.generated && <span className="content-render-badge">VIDEO RENDER</span>}</div>
         <div className="content-card-body"><div className="content-card-top"><div><div className="content-card-kicker">{page?.name || "Chưa gán Page"} · {post.updatedAt ? new Date(post.updatedAt).toLocaleDateString("vi-VN") : "mới"}</div><h3>{post.title}</h3></div><Badge status={post.status} /></div>
           {post.caption && <p className="content-caption">{post.caption}</p>}
           <div className="content-meta-row"><span><MessageCircle size={13} /> {post.firstComment ? "Có first comment" : "Chưa có first comment"}</span>{post.linkUrl && <a href={post.linkUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> {post.linkLabel || "Mở link"}</a>}{post.sourceUrl && <a href={post.sourceUrl} target="_blank" rel="noreferrer"><Newspaper size={13} /> Nguồn</a>}</div>
@@ -202,7 +208,7 @@ export function ContentPage({ data, project, notify, navigate }) {
     {modal && <Modal wide title={modal.mode === "edit" ? "Sửa Content" : "Soạn Content mới"} onClose={() => setModal(null)}><form onSubmit={savePost} className="content-form">
       <div className="content-form-type"><label><input type="radio" name="contentType" value="news" defaultChecked={modal.post.contentType === "news"} /> <Newspaper size={15} /> News</label><label><input type="radio" name="contentType" value="product" defaultChecked={modal.post.contentType !== "news"} /> <ShoppingBag size={15} /> Product</label></div>
       <div className="form-grid"><Field label="Tiêu đề"><input name="title" required maxLength={200} defaultValue={modal.post.title} autoFocus placeholder="Ví dụ: 3 thay đổi đáng chú ý hôm nay" /></Field><Field label="Page xuất bản"><select name="pageId" required defaultValue={modal.post.pageId}>{pages.filter((page) => !page.archived || page.id === modal.post.pageId).map((page) => <option key={page.id} value={page.id}>{page.name}{page.archived ? " (đã lưu trữ)" : ""}</option>)}</select></Field><Field label="Nhóm Page"><select name="pageGroupId" defaultValue={modal.post.pageGroupId || ""}><option value="">Không chọn nhóm</option>{(data.settings?.meta?.pageGroups || []).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field><Field label="Pool token"><select name="tokenGroupId" defaultValue={modal.post.tokenGroupId || ""}><option value="">Tự chọn token khỏe</option>{(data.settings?.meta?.tokenGroups || []).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field></div>
-      <div className="content-form-columns"><div><Field label="Caption"><textarea name="caption" rows="8" maxLength={20000} defaultValue={modal.post.caption} placeholder="Caption chính…" /></Field><Field label="First comment" hint="Dùng cho link store, link affiliate hoặc link bài viết dài. Sẽ được giữ trong handoff package."><textarea name="firstComment" rows="5" maxLength={10000} defaultValue={modal.post.firstComment} placeholder="Xem link đầy đủ tại…" /></Field></div><div><Field label="Media đính kèm"><select name="mediaId" defaultValue={modal.post.mediaIds?.[0] || ""}><option value="">Không đính kèm media</option>{media.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kind}</option>)}</select></Field><div className="content-link-box"><div className="hub-kicker">LINK &amp; SOURCE</div><Field label="Link store / website"><input name="linkUrl" type="url" defaultValue={modal.post.linkUrl} placeholder="https://…" /></Field><Field label="Nhãn link"><input name="linkLabel" maxLength={160} defaultValue={modal.post.linkLabel} placeholder="Xem sản phẩm" /></Field><Field label="Nguồn bài viết" hint="News nên lưu link nguồn để kiểm tra trước khi đăng."><input name="sourceUrl" type="url" defaultValue={modal.post.sourceUrl} placeholder="https://news.example.com/article" /></Field></div></div></div>
+      <div className="content-form-columns"><div><Field label="Caption"><textarea name="caption" rows="8" maxLength={20000} defaultValue={modal.post.caption} placeholder="Caption chính…" /></Field><Field label="First comment" hint="Dùng cho link store, link affiliate hoặc link bài viết dài. Sẽ được giữ trong handoff package."><textarea name="firstComment" rows="5" maxLength={10000} defaultValue={modal.post.firstComment} placeholder="Xem link đầy đủ tại…" /></Field></div><div><Field label="Video render trong kho" hint={renderedVideos.length ? `${renderedVideos.length} video đã render sẵn, ưu tiên hiển thị đầu danh sách.` : "Chưa có video render; hãy render ở Dựng video hoặc Research trước."}><select name="mediaId" defaultValue={modal.post.mediaIds?.[0] || ""}><option value="">Không đính kèm media</option>{renderedVideos.length > 0 && <option disabled>— VIDEO ĐÃ RENDER —</option>}{renderedVideos.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.duration ? `${Number(item.duration).toFixed(1)}s` : "video"}</option>)}{media.some((item) => !renderedVideos.includes(item)) && <option disabled>— MEDIA KHÁC —</option>}{media.filter((item) => !renderedVideos.includes(item)).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kind}</option>)}</select></Field><div className="content-link-box"><div className="hub-kicker">LINK &amp; SOURCE</div><Field label="Link store / website"><input name="linkUrl" type="url" defaultValue={modal.post.linkUrl} placeholder={modal.post.contentType === "news" ? contentDefaults.articleWebsiteUrl || "https://website-bai-viet…" : contentDefaults.storeUrl || "https://store…"} /></Field><Field label="Nhãn link"><input name="linkLabel" maxLength={160} defaultValue={modal.post.linkLabel} placeholder={modal.post.contentType === "news" ? contentDefaults.articleLinkLabel || "Đọc bài đầy đủ" : contentDefaults.storeLinkLabel || "Xem sản phẩm"} /></Field><Field label="Nguồn bài viết" hint="News nên lưu link nguồn để kiểm tra trước khi đăng."><input name="sourceUrl" type="url" defaultValue={modal.post.sourceUrl} placeholder="https://news.example.com/article" /></Field></div></div></div>
       <div className="form-grid"><Field label="Trạng thái"><select name="status" defaultValue={modal.post.status}><option value="draft">Bản nháp</option><option value="ready">Đã duyệt</option><option value="scheduled">Có lịch</option></select></Field><Field label="Thời gian dự kiến"><input name="scheduledAt" type="datetime-local" defaultValue={localDateInput(modal.post.scheduledAt)} /></Field></div><Field label="Ghi chú nội bộ"><textarea name="notes" rows="2" maxLength={5000} defaultValue={modal.post.notes} placeholder="Ghi chú cho team…" /></Field><Notice>Content chỉ ghi nhận kế hoạch và tạo gói handoff. Việc publish Meta vẫn đi qua preflight và tài khoản/token do bạn sở hữu.</Notice><div className="modal-actions"><Button type="button" onClick={() => setModal(null)}>Hủy</Button><Button variant="primary" busy={busy === "post:new" || busy === `post:${modal.post.id}`}>{modal.mode === "edit" ? "Lưu Content" : "Tạo bản nháp"} <Send size={15} /></Button></div>
     </form></Modal>}
   </div>;

@@ -128,6 +128,56 @@ test("Meta vault keeps multiple token bindings and independent groups redacted",
   }
 });
 
+test("Meta Via Token requires App ID and App Secret, then redacts the secret", async () => {
+  const { default: express } = await import("express");
+  const { Store } = await import("../server/store.js");
+  const { mountMetaRoutes } = await import("../server/meta.js");
+  const { default: fs } = await import("node:fs/promises");
+  const { default: path } = await import("node:path");
+  const { randomUUID } = await import("node:crypto");
+  const root = path.resolve(".verification", `meta-via-token-${randomUUID()}`);
+  await fs.mkdir(root, { recursive: true });
+  const store = new Store(root);
+  const debugCalls = [];
+  const app = express();
+  app.use(express.json());
+  mountMetaRoutes(app, store, { client: {
+    debugToken: async (input) => {
+      debugCalls.push(input);
+      return { data: { is_valid: true, app_id: input.appId } };
+    },
+    me: async () => ({ id: "99", name: "Via Owner" }),
+    pages: async () => ({ data: [{ id: "987", name: "Via Page", access_token: "page-via-secret" }] }),
+  } });
+  app.use((error, req, res, next) => res.status(error.status || 400).json({ code: error.code || "INVALID_REQUEST", error: error.message }));
+  const server = await new Promise((resolve) => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const response = await fetch(`${base}/api/tokens`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accessToken: "via-token-123456", kind: "VIA_TOKEN", appId: "app-123", appSecret: "app-secret-value", name: "Via connection" }),
+    });
+    assert.equal(response.status, 201);
+    const body = await response.json();
+    assert.equal(debugCalls.length, 1);
+    assert.equal(debugCalls[0].appId, "app-123");
+    assert.equal(debugCalls[0].appSecret, "app-secret-value");
+    assert.equal(JSON.stringify(body).includes("app-secret-value"), false);
+    assert.equal(JSON.stringify(body).includes("via-token-123456"), false);
+    assert.equal(store.state.settings.meta.tokens[0].kind, "VIA_TOKEN");
+    assert.equal(store.state.settings.meta.tokens[0].appSecret, "app-secret-value");
+    assert.equal(JSON.stringify(store.publicSnapshot()).includes("app-secret-value"), false);
+    const publicState = await (await fetch(`${base}/api/meta`)).json();
+    assert.equal(publicState.tokens[0].appId, "app-123");
+    assert.equal(publicState.tokens[0].hasAppSecret, true);
+    assert.equal(JSON.stringify(publicState).includes("app-secret-value"), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Meta Reel publish is explicit and idempotent after preflight", async () => {
   const { default: express } = await import("express");
   const { Store } = await import("../server/store.js");

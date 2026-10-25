@@ -35,6 +35,14 @@ const statusLabels = {
   published: "Đã ghi nhận đăng",
 };
 
+const blankMetaTokenForm = () => ({
+  name: "",
+  kind: "SYSTEM_USER",
+  appId: "",
+  appSecret: "",
+  note: "",
+});
+
 const emptyPost = (projectId, pageId, mediaId = "") => ({
   projectId,
   pageId,
@@ -125,7 +133,7 @@ export function SocialPage({ data, project, run, notify }) {
   const [meta, setMeta] = useState(data.settings?.meta || null);
   const [metaToken, setMetaToken] = useState("");
   const [metaBusy, setMetaBusy] = useState(false);
-  const [tokenForm, setTokenForm] = useState({ name: "", kind: "USER", note: "" });
+  const [tokenForm, setTokenForm] = useState(blankMetaTokenForm);
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [groupDialog, setGroupDialog] = useState(null);
 
@@ -253,7 +261,7 @@ export function SocialPage({ data, project, run, notify }) {
     const result = await metaAction(() => api("/meta/tokens", { accessToken: token, ...tokenForm }, "POST"), "Đã thêm token và đồng bộ Page.");
     if (result) {
       setMetaToken("");
-      setTokenForm({ name: "", kind: "USER", note: "" });
+      setTokenForm(blankMetaTokenForm());
       setTokenDialogOpen(false);
       await refreshMeta();
     }
@@ -429,7 +437,7 @@ export function SocialPage({ data, project, run, notify }) {
         <div style={{ flex: 1 }}>
           <strong>Meta Page publisher</strong>
           <p>Nhập access token do bạn sở hữu để tải danh sách Page, gắn Page token và đăng Reel sau bước preflight. Token không được hiển thị lại.</p>
-          {!meta?.connected ? <form onSubmit={connectMeta} className="social-form-inline"><input type="password" autoComplete="off" value={metaToken} onChange={(event) => setMetaToken(event.target.value)} placeholder="Meta access token" /><Button type="submit" variant="primary" busy={metaBusy}>Kết nối Meta</Button></form> : <div className="social-form-inline"><select aria-label="Meta Page" value={meta.boundPage?.id || ""} onChange={bindMeta}><option value="">Chọn Page để đăng</option>{(meta.pages || []).map((page) => <option key={page.id} value={page.id}>{page.name} · {page.id}</option>)}</select><Button onClick={() => metaAction(() => api("/meta/refresh-pages"), "Đã cập nhật danh sách Page.")} busy={metaBusy}>Làm mới</Button><Button onClick={disconnectMeta} busy={metaBusy}>Ngắt kết nối</Button></div>}
+          {!meta?.connected ? <Button variant="primary" onClick={() => { setTokenForm(blankMetaTokenForm()); setMetaToken(""); setTokenDialogOpen(true); }}><KeyRound size={14} /> Thêm token Meta</Button> : <div className="social-form-inline"><select aria-label="Meta Page" value={meta.boundPage?.id || ""} onChange={bindMeta}><option value="">Chọn Page để đăng</option>{(meta.pages || []).map((page) => <option key={page.id} value={page.id}>{page.name} · {page.id}</option>)}</select><Button onClick={() => metaAction(() => api("/meta/refresh-pages"), "Đã cập nhật danh sách Page.")} busy={metaBusy}>Làm mới</Button><Button onClick={disconnectMeta} busy={metaBusy}>Ngắt kết nối</Button></div>}
           {meta?.connected && <small>{meta.boundPage ? `Đang gắn: ${meta.boundPage.name}` : "Chưa gắn Page."} · Graph {meta.graphVersion || "v26.0"}</small>}
         </div>
       </section>
@@ -459,7 +467,7 @@ export function SocialPage({ data, project, run, notify }) {
               {(meta?.tokens || []).length ? meta.tokens.map((token) => (
                 <div className="meta-token-row" key={token.id}>
                   <div className="meta-token-icon"><ShieldCheck size={16} /></div>
-                  <div className="meta-token-main"><strong>{token.name}</strong><small>{token.tokenMasked || "***"} · {token.pagesCount || 0} Page · {token.ownerName || token.kind}</small>{token.errorMessage && <small className="meta-token-error">{token.errorMessage}</small>}</div>
+                  <div className="meta-token-main"><strong>{token.name}</strong><small>{token.tokenMasked || "***"} · {token.pagesCount || 0} Page · {token.kind === "VIA_TOKEN" ? `Via Token · App ${token.appId || "?"}` : "System User"}</small>{token.errorMessage && <small className="meta-token-error">{token.errorMessage}</small>}</div>
                   <span className={`meta-token-status ${token.status === "ACTIVE" ? "ok" : "warn"}`}>{token.status === "ACTIVE" ? "Đã xác minh" : token.status}</span>
                   <Button className="icon-button" aria-label={`Kiểm tra ${token.name}`} onClick={() => refreshToken(token)} busy={metaBusy}><RefreshCw size={14} /></Button>
                   <Button className="icon-button danger-text" aria-label={`Xóa ${token.name}`} onClick={() => removeToken(token)} busy={metaBusy}><Trash2 size={14} /></Button>
@@ -529,7 +537,7 @@ export function SocialPage({ data, project, run, notify }) {
 
       {publicationPost && <Modal title="Ghi nhận đăng thủ công" onClose={() => setPublicationPost(null)}><p className="social-manual-label">Chỉ thực hiện sau khi bạn đã đăng bài bằng công cụ bên ngoài. Nhập đúng permalink và ID bài đăng; Studio không xác minh hay gửi nội dung.</p><form onSubmit={recordPublication}><Field label="External post ID"><input name="externalPostId" required pattern="[A-Za-z0-9_-]{1,200}" placeholder="ID từ công cụ đăng" /></Field><Field label="Permalink Facebook"><input name="permalink" type="url" required placeholder="https://www.facebook.com/..." /></Field><Field label="Thời điểm đã đăng"><input name="publishedAt" type="datetime-local" required defaultValue={localDateInput(new Date().toISOString())} /></Field><div className="social-dialog-actions"><Button type="button" onClick={() => setPublicationPost(null)}>Hủy</Button><Button variant="primary" busy={busyId.startsWith("publish:")}><Check size={14} /> Ghi nhận</Button></div></form></Modal>}
 
-      {tokenDialogOpen && <Modal wide title="Thêm access token Meta vào vault" onClose={() => setTokenDialogOpen(false)}><form onSubmit={addToken}><p className="social-form-hint">Studio sẽ kiểm tra token bằng <code>/me</code> và <code>/me/accounts</code>, sau đó đồng bộ Page token do Meta trả về. Chỉ metadata, fingerprint và token mask được trả về giao diện.</p><Field label="Access token"><input type="password" required autoComplete="off" value={metaToken} onChange={(event) => setMetaToken(event.target.value)} placeholder="Dán token Meta do bạn sở hữu" /></Field><div className="social-form-grid"><Field label="Tên kết nối"><input value={tokenForm.name} maxLength={120} placeholder="Ví dụ: Team Content 01" onChange={(event) => setTokenForm((current) => ({ ...current, name: event.target.value }))} /></Field><Field label="Loại access token"><select value={tokenForm.kind} onChange={(event) => setTokenForm((current) => ({ ...current, kind: event.target.value }))}><option value="USER">User access token · khuyến nghị</option><option value="SYSTEM_USER">System user access token</option></select></Field><Field label="Ghi chú"><textarea rows="3" maxLength={2000} value={tokenForm.note} onChange={(event) => setTokenForm((current) => ({ ...current, note: event.target.value }))} /></Field></div><div className="meta-token-type-help"><Info size={15} /><span>{tokenForm.kind === "SYSTEM_USER" ? "System user token phải được cấp Page asset và quyền phù hợp trong Meta Business Settings." : "User access token dùng để xác minh tài khoản và lấy các Page bạn có quyền quản lý."}</span></div><div className="social-dialog-actions"><Button type="button" onClick={() => setTokenDialogOpen(false)}>Hủy</Button><Button variant="primary" busy={metaBusy}><ShieldCheck size={14} /> Kiểm tra &amp; lưu</Button></div></form></Modal>}
+      {tokenDialogOpen && <Modal wide title="Thêm credential Meta vào vault" onClose={() => setTokenDialogOpen(false)}><form onSubmit={addToken}><p className="social-form-hint">Chọn một trong hai cách xác thực. System User dùng token đã cấp Page asset; Via Token cần App ID, App Secret và Via Token để kiểm tra qua <code>/debug_token</code>. Secret chỉ lưu local và không trả về giao diện.</p><Field label={tokenForm.kind === "VIA_TOKEN" ? "Via Token" : "System User access token"}><input type="password" required autoComplete="off" value={metaToken} onChange={(event) => setMetaToken(event.target.value)} placeholder={tokenForm.kind === "VIA_TOKEN" ? "Dán Via Token do bạn sở hữu" : "Dán System User token do bạn sở hữu"} /></Field><div className="social-form-grid"><Field label="Tên kết nối"><input value={tokenForm.name} maxLength={120} placeholder="Ví dụ: Team Content 01" onChange={(event) => setTokenForm((current) => ({ ...current, name: event.target.value }))} /></Field><Field label="Loại credential"><select value={tokenForm.kind} onChange={(event) => setTokenForm((current) => ({ ...current, kind: event.target.value }))}><option value="SYSTEM_USER">System User</option><option value="VIA_TOKEN">Via Token · App ID + App Secret</option></select></Field>{tokenForm.kind === "VIA_TOKEN" && <><Field label="App ID"><input required value={tokenForm.appId} maxLength={200} autoComplete="off" placeholder="Meta App ID" onChange={(event) => setTokenForm((current) => ({ ...current, appId: event.target.value }))} /></Field><Field label="App Secret"><input required type="password" value={tokenForm.appSecret} maxLength={5000} autoComplete="new-password" placeholder="Meta App Secret" onChange={(event) => setTokenForm((current) => ({ ...current, appSecret: event.target.value }))} /></Field></>}<Field label="Ghi chú"><textarea rows="3" maxLength={2000} value={tokenForm.note} onChange={(event) => setTokenForm((current) => ({ ...current, note: event.target.value }))} /></Field></div><div className="meta-token-type-help"><Info size={15} /><span>{tokenForm.kind === "VIA_TOKEN" ? "Via Token được kiểm tra bằng App ID + App Secret trước khi đồng bộ Page. Nếu App ID không khớp, Meta sẽ từ chối." : "System User token cần được cấp Page asset và quyền phù hợp trong Meta Business Settings."}</span></div><div className="social-dialog-actions"><Button type="button" onClick={() => setTokenDialogOpen(false)}>Hủy</Button><Button variant="primary" busy={metaBusy}><ShieldCheck size={14} /> Kiểm tra &amp; lưu</Button></div></form></Modal>}
 
       {groupDialog && <Modal wide title={`Tạo nhóm ${groupDialog.kind === "token" ? "token" : "Page"}`} onClose={() => setGroupDialog(null)}><form onSubmit={saveMetaGroup}><Field label="Tên nhóm"><input name="name" required maxLength={120} autoFocus placeholder={groupDialog.kind === "token" ? "Ví dụ: Team A · quota thấp" : "Ví dụ: Page bán hàng miền Bắc"} /></Field><div className="meta-group-picker"><strong>{groupDialog.kind === "token" ? "Chọn token trong nhóm" : "Chọn Page trong nhóm"}</strong>{(groupDialog.kind === "token" ? (meta?.tokens || []) : (meta?.pages || [])).map((item) => <label key={item.id}><input type="checkbox" name={groupDialog.kind === "token" ? "tokenIds" : "pageIds"} value={item.id} /><span>{item.name || item.id}</span><small>{item.id}</small></label>)}{!(groupDialog.kind === "token" ? meta?.tokens?.length : meta?.pages?.length) && <p className="meta-empty">Chưa có dữ liệu để thêm vào nhóm.</p>}</div><div className="social-dialog-actions"><Button type="button" onClick={() => setGroupDialog(null)}>Hủy</Button><Button variant="primary"><FolderPlus size={14} /> Tạo nhóm</Button></div></form></Modal>}
     </div>

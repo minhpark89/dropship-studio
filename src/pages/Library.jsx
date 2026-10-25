@@ -51,12 +51,12 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
       navigate("editor");
     }
   };
-  const handoffToSocial = (item) => {
+  const handoffToContent = (item) => {
     sessionStorage.setItem(
-      "studio-social-media",
+      "studio-content-media",
       JSON.stringify({ mediaId: item.id, projectId: project.id }),
     );
-    navigate("social");
+    navigate("content");
   };
   return (
     <div className="page">
@@ -188,10 +188,10 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
                   {item.kind !== "audio" && (
                     <button
                       className="text-button"
-                      onClick={() => handoffToSocial(item)}
+                      onClick={() => handoffToContent(item)}
                     >
                       <Newspaper size={14} />
-                      Soạn bài
+                      Soạn Content
                     </button>
                   )}
                   <div className="inline-actions">

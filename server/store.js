@@ -51,6 +51,16 @@ export class Store extends EventEmitter {
         ffmpegPath: "",
         ffprobePath: "",
         browserVisible: false,
+        content: {
+          storeName: "",
+          storeUrl: "",
+          storeLinkLabel: "Xem sản phẩm",
+          articleWebsiteName: "",
+          articleWebsiteUrl: "",
+          articleLinkLabel: "Đọc bài đầy đủ",
+          productFirstCommentTemplate: "",
+          newsFirstCommentTemplate: "",
+        },
         llm: {
           enabled: false,
           endpoint: "https://api.openai.com/v1",
@@ -112,6 +122,16 @@ export class Store extends EventEmitter {
       ffmpegPath: "",
       ffprobePath: "",
       browserVisible: false,
+      content: {
+        storeName: "",
+        storeUrl: "",
+        storeLinkLabel: "Xem sản phẩm",
+        articleWebsiteName: "",
+        articleWebsiteUrl: "",
+        articleLinkLabel: "Đọc bài đầy đủ",
+        productFirstCommentTemplate: "",
+        newsFirstCommentTemplate: "",
+      },
       llm: {
         enabled: false,
         endpoint: "https://api.openai.com/v1",
@@ -145,6 +165,10 @@ export class Store extends EventEmitter {
       ...defaults.llm,
       ...(this.state.settings.llm || {}),
     };
+    this.state.settings.content = {
+      ...defaults.content,
+      ...(this.state.settings.content || {}),
+    };
     this.state.settings.meta = {
       ...defaults.meta,
       ...(this.state.settings.meta || {}),
@@ -159,7 +183,7 @@ export class Store extends EventEmitter {
       recovered = true;
     }
     for (const token of this.state.settings.meta.tokens) {
-      if (!["USER", "SYSTEM_USER"].includes(token.kind)) {
+      if (!["USER", "SYSTEM_USER", "VIA_TOKEN"].includes(token.kind)) {
         token.kind = "USER";
         recovered = true;
       }
@@ -255,10 +279,11 @@ export class Store extends EventEmitter {
             return [id, { ...publicBinding, hasToken: Boolean(pageToken) }];
           })),
         })),
-        tokens: (snapshot.settings.meta.tokens || []).map(({ token, ...entry }) => ({
+        tokens: (snapshot.settings.meta.tokens || []).map(({ token, appSecret, ...entry }) => ({
           ...entry,
           tokenMasked: token ? maskSecret(token) : "",
           hasToken: Boolean(token),
+          hasAppSecret: Boolean(appSecret),
         })),
       };
     }

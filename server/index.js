@@ -131,7 +131,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       tools: await checkTools(store.state.settings),
       browser,
       dataDir: store.root,
-      version: "0.3.1",
+      version: "0.3.2",
     });
   });
 
@@ -325,9 +325,11 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       email: "",
       proxy: "",
       status: "needs_login",
-      message: "Slot đã tạo. Nhập email của bạn và hoàn tất đăng nhập/xác minh DreamFace trước khi dùng.",
+      message: "Profile local đã tạo. Nhập email của bạn và hoàn tất đăng nhập/xác minh DreamFace trước khi dùng.",
       rotationIndex: index + 1,
       rotationEnabled: true,
+      rotationMode: "daily",
+      rotationDay: "",
     }));
     res.status(201).json({ accounts, created: accounts.length });
   });
@@ -401,6 +403,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     res.json(queue.retry(req.params.id, req.body.confirmResubmit === true)),
   );
   app.patch("/api/settings", (req, res) => {
+    const httpUrl = (value) => String(value || "").trim() === "" || /^https?:\/\/[^\s]+$/i.test(String(value));
     const input = z
       .object({
         concurrency: z.number().int().min(1).max(5).optional(),
@@ -411,9 +414,21 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
         ffmpegPath: z.string().max(1000).optional(),
         ffprobePath: z.string().max(1000).optional(),
         browserVisible: z.boolean().optional(),
+        content: z.object({
+          storeName: z.string().trim().max(160).optional(),
+          storeUrl: z.string().trim().max(2000).refine(httpUrl, "URL Store phải bắt đầu bằng http:// hoặc https://.").optional(),
+          storeLinkLabel: z.string().trim().max(160).optional(),
+          articleWebsiteName: z.string().trim().max(160).optional(),
+          articleWebsiteUrl: z.string().trim().max(2000).refine(httpUrl, "URL website bài viết phải bắt đầu bằng http:// hoặc https://.").optional(),
+          articleLinkLabel: z.string().trim().max(160).optional(),
+          productFirstCommentTemplate: z.string().max(10000).optional(),
+          newsFirstCommentTemplate: z.string().max(10000).optional(),
+        }).optional(),
       })
       .parse(req.body);
-    Object.assign(store.state.settings, input);
+    const { content, ...generalSettings } = input;
+    Object.assign(store.state.settings, generalSettings);
+    if (content) store.state.settings.content = { ...(store.state.settings.content || {}), ...content };
     store.save();
     res.json(store.state.settings);
   });
@@ -444,7 +459,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
             .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
             .join("\n")
         : error.message;
-    for (const secret of [req.body?.password, req.body?.cookies]) {
+    for (const secret of [req.body?.password, req.body?.cookies, req.body?.accessToken, req.body?.token, req.body?.appSecret]) {
       if (typeof secret === "string" && secret.length > 3)
         message = message?.replaceAll(secret, "[đã ẩn]");
     }

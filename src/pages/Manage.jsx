@@ -387,14 +387,27 @@ export function SettingsPage({ data, project, run, notify }) {
     }
   };
   useEffect(() => {
+    if (settings.llm?.enabled !== true) return undefined;
     const timer = setTimeout(() => loadModels(true), 350);
     return () => clearTimeout(timer);
-  }, [settings.llm?.endpoint]);
+  }, [settings.llm?.endpoint, settings.llm?.enabled]);
   const testLlm = async () => {
     setLlmTestBusy(true);
     const result = await run(() => api("/settings/llm/test"));
     if (result) setLlmTest(result);
     setLlmTestBusy(false);
+  };
+  const updateContentSetting = (key, value) => setSettings((current) => ({
+    ...current,
+    content: { ...(current.content || {}), [key]: value },
+  }));
+  const saveContentSettings = async (event) => {
+    event.preventDefault();
+    const result = await run(
+      () => api("/settings", { content: settings.content || {} }, "PATCH"),
+      "Đã lưu cấu hình Store, website và First Comment.",
+    );
+    if (result) setSettings((current) => ({ ...current, content: result.content || current.content }));
   };
   return (
     <div className="page settings-page">
@@ -736,6 +749,27 @@ export function SettingsPage({ data, project, run, notify }) {
                 Lưu endpoint LLM
               </Button>
             </div>
+          </form>
+        </section>
+        <section className="panel settings-content-panel">
+          <div className="panel-heading">
+            <h3><Globe2 size={18} /> Content · Store &amp; website</h3>
+          </div>
+          <p className="muted small">Đặt link mặc định một lần. Khi tạo Content News/Product, app tự điền link, nhãn link và First Comment để bạn chỉ cần chọn video rồi duyệt.</p>
+          <form onSubmit={saveContentSettings}>
+            <div className="form-grid">
+              <Field label="Tên Store"><input value={settings.content?.storeName || ""} maxLength={160} placeholder="Ví dụ: Viral Shop" onChange={(event) => updateContentSetting("storeName", event.target.value)} /></Field>
+              <Field label="URL Store"><input type="url" value={settings.content?.storeUrl || ""} placeholder="https://store.example.com" onChange={(event) => updateContentSetting("storeUrl", event.target.value)} /></Field>
+              <Field label="Nhãn link Store"><input value={settings.content?.storeLinkLabel || ""} maxLength={160} placeholder="Xem sản phẩm" onChange={(event) => updateContentSetting("storeLinkLabel", event.target.value)} /></Field>
+              <Field label="Tên website bài viết"><input value={settings.content?.articleWebsiteName || ""} maxLength={160} placeholder="Ví dụ: Viral News" onChange={(event) => updateContentSetting("articleWebsiteName", event.target.value)} /></Field>
+              <Field label="URL website bài viết"><input type="url" value={settings.content?.articleWebsiteUrl || ""} placeholder="https://news.example.com" onChange={(event) => updateContentSetting("articleWebsiteUrl", event.target.value)} /></Field>
+              <Field label="Nhãn link bài viết"><input value={settings.content?.articleLinkLabel || ""} maxLength={160} placeholder="Đọc bài đầy đủ" onChange={(event) => updateContentSetting("articleLinkLabel", event.target.value)} /></Field>
+            </div>
+            <div className="form-grid">
+              <Field label="First Comment Product mặc định" hint="Có thể dùng {{link}} để chèn link Store khi bạn tự soạn."><textarea rows="3" maxLength={10000} value={settings.content?.productFirstCommentTemplate || ""} placeholder="Xem sản phẩm tại: {{link}}" onChange={(event) => updateContentSetting("productFirstCommentTemplate", event.target.value)} /></Field>
+              <Field label="First Comment News mặc định" hint="Có thể dùng {{link}} để chèn link bài viết khi bạn tự soạn."><textarea rows="3" maxLength={10000} value={settings.content?.newsFirstCommentTemplate || ""} placeholder="Đọc bài đầy đủ tại: {{link}}" onChange={(event) => updateContentSetting("newsFirstCommentTemplate", event.target.value)} /></Field>
+            </div>
+            <Button variant="primary"><Save size={15} /> Lưu Content defaults</Button>
           </form>
         </section>
         <section className="panel">

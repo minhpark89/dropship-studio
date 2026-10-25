@@ -34,7 +34,7 @@ import { ProductPage } from "./pages/Product.jsx";
 import "./style.css";
 import "./pages/workspace.css";
 
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.3.2";
 
 const navGroups = [
   {
