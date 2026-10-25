@@ -43,6 +43,19 @@ function accountStatus(account) {
   return account.status === "ready" ? "Sẵn sàng" : account.status === "checking" ? "Đang kiểm tra" : account.status === "needs_login" ? "Cần đăng nhập" : account.status || "Chưa kiểm tra";
 }
 
+function ResearchImageTile({ image }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <a className="research-image-tile" href={image.pageUrl || image.imageUrl} target="_blank" rel="noreferrer">
+      <div className={`research-image-thumb${failed ? " is-failed" : ""}`}>
+        {failed ? <span>Preview unavailable</span> : <img src={image.imageUrl} alt={image.title || image.query} loading="eager" decoding="async" onError={() => setFailed(true)} />}
+      </div>
+      <span>{image.title || image.query}</span>
+      <small>{image.license || "Commons"}</small>
+    </a>
+  );
+}
+
 function ResearchForm({ project, onResult, notify }) {
   const [value, setValue] = useState(emptyResearch);
   const [busy, setBusy] = useState(false);
@@ -104,7 +117,7 @@ function ResultCard({ result, onImport, importing, onUse, onDreamFace, dreaming,
       {result.articles?.length > 0 && <div className="research-articles"><strong>Nguồn tham khảo ({result.articles.length})</strong>{result.articles.map((article) => <a key={article.id} href={article.url} target="_blank" rel="noreferrer"><span><b>{article.title}</b><small>{article.source || "Nguồn RSS"} · relevance {Math.round((article.relevance || 0) * 100)}%</small></span><ExternalLink size={14} /></a>)}</div>}
       {result.imageQueries?.length > 0 && <div className="research-tags"><strong>Image queries</strong><div>{result.imageQueries.map((query) => <span key={query}>{query}</span>)}</div></div>}
       {result.imageQueries?.length > 0 && <div className="research-auto-video"><span><Sparkles size={15} /><strong>One-click News Render</strong><small>LLM tìm ảnh, ráp caption, zoom nhẹ và đưa bản nháp 9:16 vào hàng đợi.</small></span><Button variant="primary" onClick={() => onAutoVideo(result)} busy={autoBuilding}><Sparkles size={14} /> Tự dựng &amp; render</Button></div>}
-      {result.imageQueries?.length > 0 && <div className="research-image-search"><div className="research-image-search-heading"><div><strong>Kho ảnh công khai</strong><small> Wikimedia Commons · có giấy phép và nguồn để kiểm tra</small></div><Button onClick={() => onSearchImages(result)} busy={searchingImages}><Image size={14} /> {result.imageSearchResults?.length ? "Tìm lại ảnh" : "Tìm ảnh theo query"}</Button></div>{result.imageSearchResults?.length > 0 && <><div className="research-image-grid">{result.imageSearchResults.slice(0, 6).map((image) => <a className="research-image-tile" key={image.id} href={image.pageUrl || image.imageUrl} target="_blank" rel="noreferrer"><img src={image.imageUrl} alt={image.title || image.query} loading="lazy" /><span>{image.title || image.query}</span><small>{image.license || "Commons"}</small></a>)}</div><div className="research-image-actions"><span>{result.imageSearchResults.length} ảnh đã tìm được · tối đa 12 ảnh sẽ nhập</span><Button onClick={() => onImportSearchImages(result)} busy={importingSearchImages}><Download size={14} /> Tải ảnh về thư viện</Button></div></>}</div>}
+      {result.imageQueries?.length > 0 && <div className="research-image-search"><div className="research-image-search-heading"><div><strong>Kho ảnh công khai</strong><small> Wikimedia Commons · có giấy phép và nguồn để kiểm tra</small></div><Button onClick={() => onSearchImages(result)} busy={searchingImages}><Image size={14} /> {result.imageSearchResults?.length ? "Tìm lại ảnh" : "Tìm ảnh theo query"}</Button></div>{result.imageSearchResults?.length > 0 && <><div className="research-image-grid">{result.imageSearchResults.slice(0, 6).map((image) => <ResearchImageTile key={image.id} image={image} />)}</div><div className="research-image-actions"><span>{result.imageSearchResults.length} ảnh đã tìm được · tối đa 12 ảnh sẽ nhập</span><Button onClick={() => onImportSearchImages(result)} busy={importingSearchImages}><Download size={14} /> Tải ảnh về thư viện</Button></div></>}</div>}
       {result.articles?.some((article) => article.imageUrl) && <div className="research-image-actions"><span>{result.imageMediaIds?.length || 0} ảnh đã nhập vào thư viện</span><Button onClick={() => onImport(result)} busy={importing}><ImageDown size={14} /> Tải ảnh bài viết</Button></div>}
       {result.imageMediaIds?.length > 0 && <div className="research-image-actions"><span>{result.imageMediaIds.length} ảnh sẵn sàng để dựng</span><Button onClick={() => onAssemble(result)}><Film size={14} /> Ráp ảnh + caption</Button></div>}
       {result.script && <div className="research-image-actions"><span>Script đã sẵn sàng cho trình dựng video</span><Button onClick={() => onUse(result)}><Film size={14} /> Dùng script tạo video</Button></div>}

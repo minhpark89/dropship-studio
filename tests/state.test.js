@@ -183,6 +183,21 @@ test("Local server rejects cross-site and Host spoofing requests; cookie/passwor
   }
 });
 
+test("Research image hosts are allowed by the local UI content policy", async () => {
+  const studio = await startServer({
+    port: 0,
+    dataDir: path.resolve(".verification", `csp-${randomUUID()}`),
+  });
+  try {
+    const response = await fetch(`${studio.address}/api/state`);
+    const policy = response.headers.get("content-security-policy") || "";
+    assert.match(policy, /https:\/\/thumb\.wikimedia\.org/);
+    assert.match(policy, /https:\/\/ichef\.bbci\.co\.uk/);
+  } finally {
+    await studio.close();
+  }
+});
+
 test("Web and desktop discover the same server and cannot overwrite each other with a second store", async () => {
   const directory = path.resolve(".verification", `instance-${randomUUID()}`);
   const first = await startServer({ port: 0, dataDir: directory });
