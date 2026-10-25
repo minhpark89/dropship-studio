@@ -6,6 +6,7 @@ import { createResearchService } from "./research.js";
 import { requestJsonContent } from "./llm.js";
 import { searchImageQueries, downloadImageAsset, newsImageCandidates } from "./image-search.js";
 import { StudioError } from "./store.js";
+import { newsPlanSchema, writeNewsNarration, rankNewsImages } from "./news-plan.js";
 
 const productOutput = z.object({ productName: z.string().trim().min(1).max(200), productBrief: z.string().trim().min(1).max(4000), prompt: z.string().trim().min(20).max(16000) });
 
@@ -121,7 +122,32 @@ export class ProductionService {
       item.researchId = research.id;
       this.store.save();
     }
-    if (!item.prompt) {
+    let newsPlan = null;
+    if (request.contentType === "news" && request.engine !== "preview") {
+      const callLlm = (_store, system, input) => this.llm(system, input);
+      const narration = await writeNewsNarration(this.store, research, { llm: callLlm });
+      let candidates = newsImageCandidates(research.articles, research.imageSearchResults || []);
+      if (candidates.length < 2) {
+        const found = await this.imageSearch([...narration.imageQueries, ...(research.imageQueries || [])], { fetchImpl: this.fetch, maxResultsPerQuery: 4, maxResults: 20 });
+        candidates = newsImageCandidates(research.articles, found.images);
+        this.store.patch("researchResults", research.id, { imageSearchResults: found.images, imageSearchWarnings: found.warnings });
+      }
+      const ranked = await rankNewsImages(this.store, research, candidates, { llm: callLlm });
+      const assets = [];
+      const existing = this.store.state.media.filter((media) => media.projectId === request.projectId && media.kind === "image");
+      for (const image of ranked.slice(0, 5)) {
+        const cached = existing.find((media) => media.sourceUrl && media.sourceUrl === (image.pageUrl || image.imageUrl));
+        if (cached) { assets.push(cached); continue; }
+        try { assets.push(await this.downloadImage({ image, store: this.store, projectId: request.projectId, fetchImpl: this.fetch })); }
+        catch { /* keep the remaining verified article images */ }
+      }
+      if (!assets.length) throw new StudioError("No usable editorial images were found. Retry with another niche.", "IMAGE_SEARCH_EMPTY", 422);
+      this.store.patch("researchResults", research.id, { imageMediaIds: assets.map((media) => media.id) });
+      newsPlan = newsPlanSchema.parse({ ...narration, imageMediaIds: assets.map((media) => media.id), selectedImageIds: ranked.map((image) => image.id) });
+      item.title = newsPlan.headline;
+      item.newsPlan = newsPlan;
+      this.store.save();
+    } else if (!item.prompt) {
       if (research) {
         item.title = research.headline;
         item.prompt = `Create a vertical news video for a US audience. Use American English narration and captions. Explain only the supplied verified facts. Use relevant editorial visuals and a professional presenter; do not impersonate a real broadcaster or use its logo.\n${research.headline}\n${research.script}\nSource: ${source?.source || ""}. Version ${item.index+1}: vary the opening shot and pacing.`;
@@ -140,6 +166,7 @@ export class ProductionService {
     const production = {batchId:batch.id,itemIndex:item.index,contentType:request.contentType,researchId:item.researchId,topic:request.topic,title:item.title,productBrief:item.productBrief || request.productBrief,productUrl:request.productUrl,sources:source?[source]:[]};
     let job;
     if (request.engine === "preview") {
+      if (!research) throw new StudioError("Preview mode is available for researched news only.", "RESEARCH_REQUIRED", 422);
       let assets = (research.imageMediaIds || []).map(id=>this.store.state.media.find(media=>media.id===id)).filter(Boolean);
       if (!assets.length) {
         const found = await this.imageSearch(research.imageQueries,{fetchImpl:this.fetch,maxResultsPerQuery:4,maxResults:16});
@@ -153,6 +180,8 @@ export class ProductionService {
       const assembly = buildResearchAssemblyTimeline({...defaultTimeline(),quality:"draft"},assets.slice(0,5),research,undefined,{template:"news-short"});
       this.controller.signal.throwIfAborted();
       job = this.queue.enqueueRender({projectId:request.projectId,name:`News · ${item.title}`,timeline:assembly.timeline},{production});
+    } else if (request.contentType === "news") {
+      job = this.queue.enqueueNews({ projectId: request.projectId, accountId: request.accountId, name: `News · ${newsPlan.headline}`, plan: newsPlan, imageMediaIds: newsPlan.imageMediaIds, production });
     } else {
       job = this.queue.enqueueGeneration({projectId:request.projectId,provider:"dreamface",accountId:request.accountId,kind:"video",mode:request.references.length?"reference":"text",model:"DreamFace video",duration:request.duration,ratio:request.ratio,prompts:[item.prompt],references:request.references,autoAssemble:false},{production})[0];
     }

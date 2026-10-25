@@ -52,7 +52,9 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
   const dreamface = createDreamFaceProvider({ store });
   const queue = new JobQueue(store, browsers, {
     generateDreamFace: (currentStore, job, account, signal, update) =>
-      dreamface.generate(currentStore, job, account, signal, update),
+      job.payload.workflow === "avatar-news"
+        ? dreamface.generateNewsAvatar(currentStore, job, account, signal, update)
+        : dreamface.generate(currentStore, job, account, signal, update),
   });
   if (!store.state.projects.length) store.createProject("Dự án đầu tiên");
   const app = express();

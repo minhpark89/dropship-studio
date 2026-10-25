@@ -1016,6 +1016,38 @@ nav button b {
   margin-top: 21px;
   overflow-wrap: anywhere;
 }
+.account-avatar-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  margin: -4px 0 14px;
+  padding: 7px;
+  border: 1px solid #3d4d38;
+  border-radius: 10px;
+  background: #171d18;
+}
+.account-avatar-preview img,
+.account-avatar-placeholder {
+  width: 42px;
+  height: 48px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  object-fit: cover;
+  background: linear-gradient(145deg, #303e35, #1f2924);
+}
+.account-avatar-placeholder {
+  display: grid;
+  place-items: center;
+  color: #d3e7b4;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+.account-avatar-preview > div { display: grid; gap: 3px; min-width: 0; }
+.account-avatar-kicker { color: #d4a26e; font-size: 8px; letter-spacing: .15em; font-weight: 800; }
+.account-avatar-preview strong { color: #e3eed5; font-size: 11px; overflow-wrap: anywhere; }
+.account-avatar-preview small { color: #8c9c87; font-size: 9px; line-height: 1.3; }
 .account-email {
   margin-top: 7px;
   color: #839480;

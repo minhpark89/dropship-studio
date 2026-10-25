@@ -321,9 +321,12 @@ export class DreamFaceProvider {
     const id = accountId(account);
     const prior = this.opening.get(id) || Promise.resolve();
     const pending = prior.catch(() => {}).then(async () => {
-      const existing = this.sessions.get(id);
+      let existing = this.sessions.get(id);
       const existingBrowser = existing?.context?.browser?.();
-      if (existingBrowser && !existingBrowser.isConnected()) this.sessions.delete(id);
+      if (existingBrowser && !existingBrowser.isConnected()) {
+        this.sessions.delete(id);
+        existing = null;
+      }
       if (existing?.context && existing.visible === visible) {
         const page = existing.page.isClosed() ? await existing.context.newPage() : existing.page;
         existing.page = page;
@@ -368,7 +371,24 @@ export class DreamFaceProvider {
     if (captcha || /verify you are human|confirm you.re not a robot|captcha|xác minh bạn là người/i.test(body)) {
       return { status: "verification", authStep: "identity", message: "DreamFace yêu cầu xác minh. Hãy hoàn tất trong cửa sổ hiển thị rồi kiểm tra lại; provider không tự vượt CAPTCHA." };
     }
-    const hasSession = cookies.some((cookie) => cookie.value && domainMatches(cookie.domain) && /session|token|auth|sid/i.test(cookie.name));
+    // DreamFace's current web client stores the authenticated identity and
+    // bearer token in a protected localStorage record. It does not set an
+    // auth cookie, so a cookie-only check incorrectly reported this valid
+    // session as needs_login after the user completed sign-in/CAPTCHA.
+    const localStorageSession = await page.evaluate(() => {
+      let found = false;
+      for (const key of Object.keys(localStorage)) {
+        try {
+          const value = JSON.parse(localStorage.getItem(key));
+          if (value && typeof value === "object" && value.userId && value.accountId && value.token) {
+            found = true;
+            break;
+          }
+        } catch {}
+      }
+      return found;
+    }).catch(() => false);
+    const cookieSession = cookies.some((cookie) => cookie.value && domainMatches(cookie.domain) && /session|token|auth|sid/i.test(cookie.name));
     const loginFields = await page.locator('input[type="email"]:visible, input[type="password"]:visible').count().catch(() => 0);
     const loginCta = await firstVisible([
       page.getByText(/^Log\s*in\s*\/\s*Sign\s*up$/i),
@@ -376,7 +396,8 @@ export class DreamFaceProvider {
       page.getByRole("button", { name: /log\s*in.*sign\s*up/i }),
     ]);
     const composer = await dreamFaceComposer(page);
-    if (domainMatches(new URL(page.url()).hostname) && hasSession && loginFields === 0 && !loginCta && composer) {
+    const hasSession = localStorageSession || cookieSession;
+    if (domainMatches(new URL(page.url()).hostname) && hasSession && loginFields === 0 && !loginCta && (composer || /Generate avatar videos|Want Avatar to Say|Generate video/i.test(body))) {
       return { status: "ready", authStep: "ready", message: "DreamFace đã mở phiên làm việc." };
     }
     return { status: "needs_login", authStep: "service", message: "DreamFace chưa xác nhận phiên. Hãy đăng nhập bằng tài khoản của bạn hoặc nhập cookie hợp lệ rồi kiểm tra lại." };
@@ -435,6 +456,174 @@ export class DreamFaceProvider {
     const state = await this.inspect(account, session, { navigate: true });
     if (state.status !== "ready") throw providerError(state.message, state.status === "verification" ? "VERIFICATION" : "NEEDS_LOGIN", 401);
     return action(session);
+  }
+
+  /** Create a narrated presenter clip in DreamFace's Avatar tool. */
+  async generateNewsAvatar(store, job, account, signal, update) {
+    const session = await this.open(account, { visible: false });
+    const state = await this.inspect(account, session, { navigate: true });
+    if (state.status !== "ready") {
+      throw providerError(state.message, state.status === "verification" ? "VERIFICATION" : "NEEDS_LOGIN", 401);
+    }
+    const { page } = session;
+    const oldCreationImages = new Set();
+    // Snapshot existing creation thumbnails before submitting so polling never
+    // downloads an older work when a profile already has history.
+    await page.goto("https://www.dreamfaceapp.com/creation", { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+    await page.waitForTimeout(700);
+    for (const url of await page.locator("img").evaluateAll((nodes) => nodes.map((node) => node.currentSrc || node.src).filter(Boolean)).catch(() => [])) oldCreationImages.add(url);
+    await page.goto("https://www.dreamfaceapp.com/avatar", { waitUntil: "domcontentloaded", timeout: 45000 });
+    await page.getByText("More", { exact: true }).first().waitFor({ state: "visible", timeout: 30000 });
+    await page.waitForTimeout(1800);
+    await page.getByPlaceholder("Type or paste text here").waitFor({ state: "visible", timeout: 30000 });
+    const plan = job.payload.newsPlan || {};
+
+    // DreamFace's Avatar 3.0 Fast only becomes available after an image is
+    // uploaded. The news flow therefore keeps one official DreamFace still per
+    // profile: select the named gallery avatar once, download its image through
+    // the authenticated browser context, import it into the local media vault,
+    // and upload that saved image for every later render.
+    let avatarMedia = null;
+    const existingAvatarId = job.payload.avatarMediaId || account.avatarMediaId;
+    if (existingAvatarId) {
+      avatarMedia = store.require("media", existingAvatarId);
+      if (avatarMedia.kind !== "image") {
+        throw providerError("The saved DreamFace MC image is not a valid image.", "INVALID_AVATAR_IMAGE", 422);
+      }
+    } else {
+      const more = page.getByText("More", { exact: true }).first();
+      await more.click();
+      // DreamFace renders a hidden virtualized label and the visible card label
+      // with the same text. The last visible label is the selectable card.
+      const avatarName = String(plan.avatarName || "Alex");
+      const avatarLabel = page.getByText(avatarName, { exact: true }).last();
+      await avatarLabel.waitFor({ state: "visible", timeout: 20000 });
+      const avatarCard = avatarLabel.locator('xpath=ancestor::div[contains(@class,"_avatarCard_")][1]');
+      const avatarUrl = await avatarCard.locator("img").first().getAttribute("src").catch(() => null);
+      if (!avatarUrl) throw providerError(`DreamFace avatar “${avatarName}” has no downloadable still image.`, "AVATAR_IMAGE_UNAVAILABLE", 422);
+      await avatarLabel.click();
+      const confirm = page.getByRole("button", { name: "Confirm", exact: true });
+      if (await confirm.isVisible().catch(() => false)) await confirm.click();
+      await page.waitForTimeout(2200);
+
+      const response = await session.context.request.get(avatarUrl, {
+        timeout: 60000,
+        headers: { Referer: "https://www.dreamfaceapp.com/avatar" },
+      });
+      if (!response.ok()) throw providerError(`DreamFace avatar image download failed: HTTP ${response.status()}.`, "AVATAR_IMAGE_DOWNLOAD_FAILED", 422);
+      const contentType = String(response.headers()["content-type"] || "image/jpeg").split(";")[0].toLowerCase();
+      const extension = contentType.includes("png") ? ".png" : contentType.includes("webp") ? ".webp" : ".jpg";
+      const temporary = path.join(store.root, "temp", `${randomUUID()}${extension}`);
+      try {
+        await fs.writeFile(temporary, await response.body());
+        avatarMedia = await importMedia(store, temporary, {
+          name: `DreamFace MC · ${avatarName}${extension}`,
+          // The MC still belongs to the DreamFace profile and is reusable by
+          // news projects on different days, so keep it in the global vault.
+          projectId: null,
+          generated: true,
+          move: true,
+          jobId: job.id,
+        });
+      } finally {
+        await fs.rm(temporary, { force: true }).catch(() => {});
+        await response.dispose().catch(() => {});
+      }
+      if (avatarMedia.kind !== "image") throw providerError("DreamFace did not return a usable MC image.", "INVALID_AVATAR_IMAGE", 422);
+      store.patch("accounts", account.id, { avatarMediaId: avatarMedia.id, avatarName });
+      job.payload = { ...job.payload, avatarMediaId: avatarMedia.id };
+      store.patch("jobs", job.id, { payload: job.payload });
+    }
+
+    // Upload the saved still first. This unlocks the Avatar 3.0 family in the
+    // current DreamFace UI and makes the selected effect explicit and testable.
+    const imageInput = page.locator('input[type="file"]').first();
+    if (!await imageInput.count()) throw providerError("DreamFace Avatar image upload is unavailable.", "PROVIDER_NOT_READY");
+    await imageInput.setInputFiles(avatarMedia.file);
+    await page.waitForTimeout(1800);
+
+    const prompt = page.getByPlaceholder("Type or paste text here");
+    await prompt.fill(String(plan.narration || "").slice(0, 500));
+    const effect = page.getByRole("button", { name: /Animate Effect/i }).first();
+    if (!await effect.isVisible().catch(() => false)) throw providerError("DreamFace Animate Effect is unavailable.", "PROVIDER_NOT_READY");
+    await effect.click();
+    const fast = page.getByRole("radio", { name: "Avatar 3.0 Fast", exact: true }).last();
+    if (!await fast.isVisible().catch(() => false) || await fast.getAttribute("aria-disabled") === "true") {
+      throw providerError("DreamFace Avatar 3.0 Fast is not available for this MC image.", "PROVIDER_NOT_READY");
+    }
+    await fast.click();
+    if (await fast.getAttribute("aria-checked") !== "true") throw providerError("DreamFace did not confirm Avatar 3.0 Fast.", "PROVIDER_NOT_READY");
+
+    const resolution = page.getByRole("button", { name: /Resolution/i }).first();
+    if (!await resolution.isVisible().catch(() => false)) throw providerError("DreamFace resolution selector is unavailable.", "PROVIDER_NOT_READY");
+    await resolution.click();
+    const free720 = page.getByRole("radio", { name: "720p", exact: true }).last();
+    if (!await free720.isVisible().catch(() => false)) throw providerError("DreamFace 720p free resolution is unavailable.", "PROVIDER_NOT_READY");
+    await free720.click();
+    if (await free720.getAttribute("aria-checked") !== "true") throw providerError("DreamFace did not confirm the 720p resolution.", "PROVIDER_NOT_READY");
+    update({ status: "configured", workflow: "avatar-news", effect: "Avatar 3.0 Fast", resolution: "720p", quota: "1 Free Daily", progress: 3 });
+    const baseline = new Set(await page.locator("video, video source").evaluateAll((nodes) => nodes.map((node) => node.currentSrc || node.src).filter(Boolean)));
+    for (const url of oldCreationImages) baseline.add(url);
+    const generate = page.getByRole("button", { name: "Generate", exact: true }).first();
+    if (!await generate.isVisible().catch(() => false)) throw providerError("DreamFace Avatar Generate is unavailable.", "PROVIDER_NOT_READY");
+    await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => button.innerText.trim() === "Generate" && !button.disabled), null, { timeout: 30000 }).catch(() => {
+      throw providerError("DreamFace Avatar is still loading its presenter. Try the profile again in a moment.", "PROVIDER_NOT_READY");
+    });
+    update({ status: "submitting", submittedAt: new Date().toISOString(), workflow: "avatar-news", progress: 5 });
+    await Promise.allSettled([
+      page.waitForURL(/\/creation/, { waitUntil: "domcontentloaded", timeout: 20000 }),
+      generate.click(),
+    ]);
+    update({ status: "rendering", workflow: "avatar-news", progress: 18, elapsedSeconds: 0 });
+    await page.waitForTimeout(1200);
+    const downloadCandidates = new Set();
+    const responseListener = async (response) => {
+      if (!/get_work_download_url|download/i.test(response.url())) return;
+      try {
+        const type = String(response.headers()["content-type"] || "");
+        if (type.includes("json")) for (const url of collectUrls(await response.json())) if (/\.mp4(?:[?#]|$)|download|work/i.test(url)) downloadCandidates.add(url);
+      } catch {}
+    };
+    page.on("response", responseListener);
+    const deadline = Date.now() + Math.max(2, Number(store.state.settings.maxWaitMinutes || 30)) * 60000;
+    const started = Date.now();
+    while (Date.now() < deadline) {
+      signal.throwIfAborted();
+      const body = await page.locator("body").innerText().catch(() => "");
+      if (/verify you are human|confirm you.re not a robot|captcha/i.test(body)) throw providerError("DreamFace requires verification. Complete it in the open account, then check the profile.", "VERIFICATION", 401);
+      if (/not enough credits|insufficient credits|failed to generate|daily free.*limit/i.test(body)) throw providerError("DreamFace reported that this profile has no available generation credit.", "PROVIDER_QUOTA");
+      const cards = page.locator('div[class*="_card_"]:visible');
+      for (let cardIndex = 0; cardIndex < await cards.count().catch(() => 0); cardIndex += 1) {
+        const card = cards.nth(cardIndex);
+        const imageUrl = await card.locator("img").first().getAttribute("src").catch(() => null);
+        const buttons = card.locator("button");
+        if (!imageUrl || baseline.has(imageUrl) || await buttons.count() < 1) continue;
+        // The first card action is DreamFace's official Download action. Its
+        // response is captured above, so no private API or token is persisted.
+        await buttons.first().click({ timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(1200);
+        for (const url of downloadCandidates) {
+          downloadCandidates.delete(url);
+          update({ status: "downloading", workflow: "avatar-news", progress: 82 });
+          try {
+            const media = await downloadResult(store, session, job, url, signal);
+            if (!media.hasAudio) throw providerError("DreamFace Avatar result has no audio track.", "NEWS_PRESENTER_AUDIO_REQUIRED", 422);
+            store.log(job, `DreamFace Avatar presenter ready: ${media.width}×${media.height}, ${media.duration.toFixed(2)} seconds.`);
+            page.off("response", responseListener);
+            return media;
+          } catch (error) {
+            store.log(job, `DreamFace Avatar result is not downloadable yet (${error.message}).`);
+          }
+        }
+      }
+      update({ elapsedSeconds: Math.floor((Date.now() - started) / 1000), progress: 20 + Math.min(55, Math.floor((Date.now() - started) / 1000)) });
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, Math.max(3000, Number(store.state.settings.pollSeconds || 5) * 1000));
+        signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason || new Error("aborted")); }, { once: true });
+      });
+    }
+    page.off("response", responseListener);
+    throw providerError("Timed out waiting for the DreamFace Avatar presenter. Check Creations before retrying.", "PROVIDER_TIMEOUT", 408);
   }
 
   /**

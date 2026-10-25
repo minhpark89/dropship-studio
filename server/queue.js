@@ -7,6 +7,7 @@ import {
 import { StudioError } from "./store.js";
 import { renderTimeline, validateTimeline } from "./render.js";
 import { generate } from "./providers/generate.js";
+import { renderNewsBroadcast } from "./news-render.js";
 
 export class JobQueue {
   constructor(store, browsers, options = {}) {
@@ -129,6 +130,37 @@ export class JobQueue {
     });
   }
 
+  enqueueNews({ projectId, accountId = "auto", name, plan, imageMediaIds, production = null }) {
+    this.store.require("projects", projectId);
+    if (accountId !== "auto") {
+      const account = this.store.require("accounts", accountId);
+      if (account.provider !== "dreamface") throw new StudioError("News presenters use a DreamFace profile.");
+    }
+    const images = (imageMediaIds || []).map((id) => this.store.require("media", id));
+    if (!images.length || images.some((media) => media.kind !== "image")) throw new StudioError("News presenter needs verified editorial images.");
+    return this.store.add("jobs", {
+      type: "news",
+      ...(production ? { production } : {}),
+      projectId,
+      name: String(name || `News · ${plan?.headline || "Broadcast"}`).slice(0, 120),
+      payload: {
+        provider: "dreamface",
+        accountId,
+        workflow: "avatar-news",
+        newsPlan: structuredClone(plan),
+        imageMediaIds: [...imageMediaIds],
+        presenterMediaId: null,
+        scheduledAt: null,
+      },
+      status: "queued",
+      progress: 0,
+      logs: [],
+      mediaId: null,
+      submittedAt: null,
+      error: null,
+    });
+  }
+
   tick() {
     if (this.stopping || this.store.state.settings.queuePaused) return;
     // Recover the gap between saving the last generated asset and scheduling
@@ -153,9 +185,7 @@ export class JobQueue {
         this.start(job, null);
         continue;
       }
-      const generating = [...this.running.values()].filter(
-        (entry) => entry.type === "generate",
-      );
+      const generating = [...this.running.values()].filter((entry) => entry.type === "provider");
       if (generating.length >= this.store.state.settings.concurrency) continue;
       const accounts = this.store.state.accounts.filter(
         (account) =>
@@ -196,7 +226,7 @@ export class JobQueue {
     const controller = new AbortController();
     const entry = {
       controller,
-      type: job.type,
+      type: job.type === "render" ? "render" : "provider",
       accountId: account?.id,
       profileId: account?.profileId || account?.id,
     };
@@ -225,7 +255,9 @@ export class JobQueue {
               (progress, stage) =>
                 update({ status: "rendering", progress, stage }),
             )
-          : job.payload.provider === "dreamface" && this.generateDreamFace
+          : job.type === "news"
+            ? await this.executeNews(job, account, controller.signal, update)
+            : job.payload.provider === "dreamface" && this.generateDreamFace
             ? await this.generateDreamFace(
                 this.store,
                 job,
@@ -287,6 +319,20 @@ export class JobQueue {
     if (job.status === "completed" && job.type === "generate" && job.payload.autoAssemble) {
       this.assemble(job);
     }
+  }
+
+  async executeNews(job, account, signal, update) {
+    let presenter = job.payload.presenterMediaId
+      ? this.store.require("media", job.payload.presenterMediaId)
+      : null;
+    if (!presenter) {
+      if (!this.generateDreamFace) throw new StudioError("DreamFace presenter service is unavailable.", "PROVIDER_NOT_READY", 500);
+      presenter = await this.generateDreamFace(this.store, job, account, signal, update);
+      this.store.patch("jobs", job.id, { payload: { ...job.payload, presenterMediaId: presenter.id } });
+      job.payload.presenterMediaId = presenter.id;
+    }
+    const images = (job.payload.imageMediaIds || []).map((id) => this.store.require("media", id));
+    return renderNewsBroadcast(this.store, job, presenter, job.payload.newsPlan, images, signal, update);
   }
 
   originalAttempt(job) {
@@ -427,6 +473,7 @@ export class JobQueue {
       scheduledAt: null,
     };
     if (job.type === "generate") payload.autoAssemble = original.payload.autoAssemble;
+    if (job.type === "news" && original.payload.presenterMediaId) payload.presenterMediaId = original.payload.presenterMediaId;
     if (job.type === "render" && job.assemblyBatchId) {
       const batch = this.batchEntries(job.assemblyBatchId);
       if (!batch.length || batch.some((item) => item.status !== "completed")) {
@@ -440,7 +487,7 @@ export class JobQueue {
       name: job.name,
       ...(job.production ? { production: job.production } : {}),
       payload,
-      ...(job.type === "generate" ? {
+      ...(["generate", "news"].includes(job.type) ? {
         batchId: job.batchId || original.batchId,
         sceneId: job.sceneId || original.sceneId || original.id,
         batchIndex: original.batchIndex,

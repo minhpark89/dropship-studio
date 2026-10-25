@@ -108,7 +108,7 @@ function ResultCard({ result, onImport, importing, onUse, onDreamFace, dreaming,
       {result.articles?.some((article) => article.imageUrl) && <div className="research-image-actions"><span>{result.imageMediaIds?.length || 0} ảnh đã nhập vào thư viện</span><Button onClick={() => onImport(result)} busy={importing}><ImageDown size={14} /> Tải ảnh bài viết</Button></div>}
       {result.imageMediaIds?.length > 0 && <div className="research-image-actions"><span>{result.imageMediaIds.length} ảnh sẵn sàng để dựng</span><Button onClick={() => onAssemble(result)}><Film size={14} /> Ráp ảnh + caption</Button></div>}
       {result.script && <div className="research-image-actions"><span>Script đã sẵn sàng cho trình dựng video</span><Button onClick={() => onUse(result)}><Film size={14} /> Dùng script tạo video</Button></div>}
-      {result.script && <div className="research-image-actions research-dreamface-action"><span><Sparkles size={14} /> Tạo video tin tức dọc trực tiếp bằng DreamFace</span><Button variant="primary" onClick={() => onDreamFace(result)} busy={dreaming}><Sparkles size={14} /> DreamFace video</Button></div>}
+      {result.script && <div className="research-image-actions research-dreamface-action"><span><Sparkles size={14} /> Tạo news broadcast dọc: MC DreamFace nói tóm tắt và đọc CTA first comment</span><Button variant="primary" onClick={() => onDreamFace(result)} busy={dreaming}><Sparkles size={14} /> DreamFace MC</Button></div>}
       {result.warnings?.length > 0 && <div className="research-warning"><CircleHelp size={15} />{result.warnings.join(" · ")}</div>}
     </article>
   );
@@ -219,23 +219,19 @@ export function ResearchPage({ data, project, notify, navigate }) {
     const ready = dreamface.find((account) => account.status === "ready");
     setDreaming(result.id);
     try {
-      const prompt = [result.headline || result.topic, result.angle, result.script].filter(Boolean).join("\n\n").slice(0, 20000);
-      const jobs = await api("/jobs/generate", {
+      const batch = await api("/production/batches", {
+        requestId: crypto.randomUUID(),
         projectId: project.id,
-        provider: "dreamface",
+        contentType: "news",
+        autoResearch: true,
+        topic: (result.topic || result.headline || "US news").slice(0, 200),
+        count: 1,
+        engine: "dreamface",
         accountId: ready?.id || "auto",
-        kind: "video",
-        mode: "text",
-        model: "DreamFace video",
-        duration: 10,
-        ratio: "9:16",
-        prompts: [prompt],
         references: [],
-        scheduledAt: null,
-        autoAssemble: false,
-        contentContext: { contentType: "news", researchId: result.id, title: (result.headline || result.topic).slice(0,200) },
+        feeds: [],
       });
-      notify(`Đã đưa ${jobs.length} video tin tức vào hàng đợi${ready ? "." : ". Hãy đăng nhập một DreamFace slot để chạy."}`);
+      notify(`Đã đưa ${batch.items?.length || 1} news presenter video vào hàng đợi${ready ? "." : ". Hãy đăng nhập một DreamFace slot để chạy."}`);
       navigate?.("queue");
     } catch (error) {
       notify(error.message, "error");

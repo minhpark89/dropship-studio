@@ -186,6 +186,15 @@ export function AccountsPage({ data, run, notify }) {
         <div className="account-grid">
           {accounts.map((account) => (
             <section className="panel account-card" key={account.id}>
+              {account.provider === "dreamface" && (() => {
+                const avatarMedia = account.avatarMediaId
+                  ? data.media.find((media) => media.id === account.avatarMediaId)
+                  : null;
+                return <div className="account-avatar-preview">
+                  {avatarMedia?.thumbnailUrl ? <img src={avatarMedia.thumbnailUrl} alt="DreamFace MC still" /> : <span className="account-avatar-placeholder">MC</span>}
+                  <div><span className="account-avatar-kicker">MC STILL</span><strong>{avatarMedia ? `${account.avatarName || "Alex"} · ready` : "Created on first news render"}</strong><small>{avatarMedia ? "Avatar 3.0 Fast · 720p" : "The official avatar image is saved here automatically."}</small></div>
+                </div>;
+              })()}
               <div className="spread">
                 <span className={`provider-logo ${account.provider}`}>
                   {account.provider === "dola" ? "d" : account.provider === "dreamface" ? "D" : "F"}
