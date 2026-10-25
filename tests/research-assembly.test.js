@@ -32,7 +32,7 @@ test("research assembly appends image clips and timed headline/source overlays",
   assert.equal(result.overlays[0].text, "Một headline dễ đọc");
   assert.equal(result.overlays[1].startSec, 19);
   assert.equal(result.overlays[1].endSec, 24);
-  assert.equal(result.overlays[1].text, "Nguồn: Daily Wire");
+  assert.equal(result.overlays[1].text, "Source: Daily Wire");
 });
 
 test("research assembly is idempotent for already placed images", () => {
@@ -49,4 +49,43 @@ test("research assembly is idempotent for already placed images", () => {
   assert.equal(result.additions.length, 0);
   assert.deepEqual(result.timeline, timeline);
   assert.equal(result.overlays.length, 0);
+});
+
+test("news short keeps captions readable and close to the reference duration", () => {
+  const result = buildResearchAssemblyTimeline(
+    { clips: [], texts: [] },
+    [
+      { id: "image-1", kind: "image", duration: 5 },
+      { id: "image-2", kind: "image", duration: 5 },
+    ],
+    {
+      headline: "Ukraine and Starlink: can Europe close the gap?",
+      script: "[HOOK - 0:00] A long caption that must fit safely inside the vertical frame.",
+      articles: [{ source: "BBC News" }],
+    },
+    () => "generated",
+    { template: "news-short" },
+  );
+
+  assert.deepEqual(result.additions.map((clip) => clip.outSec), [3, 3]);
+  assert.match(result.overlays[0].text, /\n/);
+  assert.equal(result.overlays[2].size, 24);
+  assert.doesNotMatch(result.overlays[2].text, /^\[/);
+});
+
+test("news captions extract narration without leaking production directions", () => {
+  const result = buildResearchAssemblyTimeline(
+    { clips: [], texts: [] },
+    Array.from({ length: 3 }, (_, index) => ({ id: `image-${index}`, kind: "image", duration: 5 })),
+    {
+      script: "[0:00] Visual: A satellite dish. VO: Starlink connects Ukraine.\n[0:05] Visual: A map. VO: Europe is seeking alternatives.\n[0:10] End card: Learn more.\n[0:12] Voiceover: Access remains uncertain.",
+    },
+    () => "generated",
+    { template: "news-short" },
+  );
+  assert.deepEqual(result.overlays.map(item => item.text.replace(/\n/g, " ")), [
+    "Starlink connects Ukraine.",
+    "Europe is seeking alternatives.",
+    "Access remains uncertain.",
+  ]);
 });

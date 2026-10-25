@@ -31,10 +31,11 @@ import { ResearchPage } from "./pages/Research.jsx";
 import { PagesPage } from "./pages/Pages.jsx";
 import { ContentPage } from "./pages/Content.jsx";
 import { ProductPage } from "./pages/Product.jsx";
+import packageInfo from "../package.json";
 import "./style.css";
 import "./pages/workspace.css";
 
-const APP_VERSION = "0.3.2";
+const APP_VERSION = packageInfo.version;
 
 const navGroups = [
   {
@@ -241,6 +242,9 @@ function App() {
             </button>
           </div>
           <div className="topbar-right">
+            <span className="app-version-pill" aria-label={`App version ${APP_VERSION}`}>
+              Viral Studio · v{APP_VERSION}
+            </span>
             <span className="local-pill">
               <i />
               {connection ? "Local workspace" : "Mất kết nối"}

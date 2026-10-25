@@ -71,6 +71,8 @@ test("research falls back visibly when LLM is disabled and never exposes the key
   assert.equal(result.projectId, project.id);
   assert.equal(result.articles.length, 1);
   assert.ok(result.warnings.some((warning) => warning.includes("LLM")));
+  assert.equal(result.language, "en");
+  assert.match(result.angle, /source-based summary/);
   assert.equal(JSON.stringify(result).includes("secret"), false);
 });
 
@@ -96,6 +98,10 @@ test("research uses an OpenAI-compatible JSON response and redacts settings", as
   assert.equal(result.headline, "Generated");
   assert.equal(result.warnings.length, 0);
   assert.equal(calls[1].options.headers.authorization, "Bearer secret-token");
+  const llmRequest = JSON.parse(calls[1].options.body);
+  assert.match(llmRequest.messages[0].content, /American English/);
+  assert.match(llmRequest.messages[0].content, /Do not invent/);
+  assert.equal(JSON.parse(llmRequest.messages[1].content).language, "en");
   assert.equal(JSON.stringify(await json(await request("/api/settings/llm"))).includes("secret-token"), false);
   assert.equal(store.state.settings.llm.apiKey, "secret-token");
 });

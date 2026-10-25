@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseWikimediaImages, searchImageQueries, isPublicImageUrl } from "../server/image-search.js";
+import { parseWikimediaImages, searchImageQueries, isPublicImageUrl,newsImageCandidates } from "../server/image-search.js";
 
 const response = (value) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
 
@@ -47,4 +47,12 @@ test("private and non-http image URLs are rejected before download", () => {
   assert.equal(isPublicImageUrl("http://127.0.0.1/image.jpg"), false);
   assert.equal(isPublicImageUrl("file:///C:/secret.jpg"), false);
   assert.equal(isPublicImageUrl("https://upload.wikimedia.org/image.jpg"), true);
+});
+
+test("news image selection prioritizes the article photograph and rejects PDF previews, stamps and logos",()=>{
+  const images=[{title:"Congress report.pdf",mime:"application/pdf",imageUrl:"https://example.com/report.pdf.jpg"},{title:"Stamp of Moldova.jpeg",mime:"image/jpeg",imageUrl:"https://example.com/stamp.jpg"},{title:"Logo.svg",mime:"image/svg+xml",imageUrl:"https://example.com/logo.svg"},{title:"Starlink dish.jpg",mime:"image/jpeg",imageUrl:"https://example.com/dish.jpg"}];
+  const selected=newsImageCandidates([{id:"source",title:"Starlink news",source:"BBC",url:"https://bbc.co.uk/news/report",imageUrl:"https://ichef.bbci.co.uk/ace/standard/240/photo.jpg"}],images);
+  assert.equal(selected.length,2);
+  assert.equal(selected[0].imageUrl,"https://ichef.bbci.co.uk/ace/standard/1280/photo.jpg");
+  assert.equal(selected[1].title,"Starlink dish.jpg");
 });

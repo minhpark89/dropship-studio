@@ -23,8 +23,8 @@ import "./research.css";
 
 const emptyResearch = {
   topic: "",
-  niche: "Tin tức tổng hợp",
-  language: "vi",
+  niche: "General news",
+  language: "en",
   feeds: "",
   maxArticles: 6,
   includeImages: true,
@@ -33,7 +33,7 @@ const emptyResearch = {
 function dateLabel(value) {
   if (!value) return "Chưa có ngày";
   try {
-    return new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+    return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
   } catch {
     return value;
   }
@@ -80,7 +80,7 @@ function ResearchForm({ project, onResult, notify }) {
           <input value={value.niche} maxLength={120} onChange={(event) => update("niche", event.target.value)} />
         </Field>
         <Field label="Ngôn ngữ">
-          <select value={value.language} onChange={(event) => update("language", event.target.value)}><option value="vi">Tiếng Việt</option><option value="en">English</option></select>
+          <select value={value.language} onChange={(event) => update("language", event.target.value)}><option value="en">English (US)</option></select>
         </Field>
         <Field label="Số bài tối đa">
           <select value={value.maxArticles} onChange={(event) => update("maxArticles", event.target.value)}>{[3, 6, 9, 12].map((count) => <option key={count} value={count}>{count} bài</option>)}</select>
@@ -233,6 +233,7 @@ export function ResearchPage({ data, project, notify, navigate }) {
         references: [],
         scheduledAt: null,
         autoAssemble: false,
+        contentContext: { contentType: "news", researchId: result.id, title: (result.headline || result.topic).slice(0,200) },
       });
       notify(`Đã đưa ${jobs.length} video tin tức vào hàng đợi${ready ? "." : ". Hãy đăng nhập một DreamFace slot để chạy."}`);
       navigate?.("queue");

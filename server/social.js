@@ -54,16 +54,19 @@ function checkMedia(store, mediaIds, projectId) {
   return media;
 }
 
-function validatePostPayload(store, payload, { existing = null, reapprove = false } = {}) {
+export function validatePostPayload(store, payload, { existing = null, reapprove = false } = {}) {
   const projectId = payload.projectId ?? existing?.projectId;
   const pageId = payload.pageId ?? existing?.pageId;
   requireProject(store, projectId);
-  const page = requirePage(store, pageId);
+  const page = pageId ? requirePage(store, pageId) : null;
   const mediaIds = payload.mediaIds ?? existing?.mediaIds ?? [];
   const media = checkMedia(store, mediaIds, projectId);
   const status = payload.status ?? existing?.status ?? "draft";
+  if (!page && status !== "draft") throw new StudioError("Assign a Page before approving or scheduling Content.", "PAGE_REQUIRED", 409);
+  const researchId = payload.researchId ?? existing?.researchId;
+  if (researchId && store.require("researchResults", researchId).projectId !== projectId) throw new StudioError("The research must belong to this project.", "RESEARCH_PROJECT_MISMATCH");
   const scheduledAt = payload.scheduledAt === undefined ? existing?.scheduledAt ?? null : payload.scheduledAt;
-  if (page.archived && (!existing || payload.pageId !== undefined && payload.pageId !== existing.pageId)) checkPageActive(page, "create");
+  if (page?.archived && (!existing || payload.pageId !== undefined && payload.pageId !== existing.pageId)) checkPageActive(page, "create");
   if (status === "ready" || status === "scheduled") checkPageActive(page, status);
   if (status === "ready" || status === "scheduled") {
     if (!(payload.caption ?? existing?.caption ?? "").trim() && media.length === 0)
@@ -126,7 +129,7 @@ export function mountSocialRoutes(app, store) {
   app.post("/api/social/posts", (req, res) => {
     const input = socialPostSchema.parse(req.body);
     const { page } = validatePostPayload(store, input);
-    checkPageActive(page, "create");
+    if (page) checkPageActive(page, "create");
     const post = store.add("socialPosts", { ...input, revision: 1, exportRevision: null, exportedAt: null });
     res.status(201).json(post);
   });
@@ -137,7 +140,7 @@ export function mountSocialRoutes(app, store) {
     assertRevision(post, input.revision);
     if (post.status === "published") throw new StudioError("Bài đã ghi nhận đăng và không thể sửa.", "IMMUTABLE_PUBLISHED", 409);
     const { revision, ...changes } = input;
-  const contentChanged = ["caption", "firstComment", "linkUrl", "linkLabel", "sourceUrl", "contentType", "mediaIds", "pageId", "title"].some((key) => changes[key] !== undefined && JSON.stringify(changes[key]) !== JSON.stringify(post[key]));
+    const contentChanged = ["caption", "articleBody", "researchId", "firstComment", "linkUrl", "linkLabel", "sourceUrl", "contentType", "mediaIds", "pageId", "title"].some((key) => changes[key] !== undefined && JSON.stringify(changes[key]) !== JSON.stringify(post[key]));
     const explicitlyReapproved = contentChanged && (changes.status === "ready" || changes.status === "scheduled");
     if (contentChanged && !explicitlyReapproved) {
       changes.status = "draft";
@@ -163,7 +166,7 @@ export function mountSocialRoutes(app, store) {
     const { revision } = socialRevisionSchema.parse(req.body);
     const source = store.require("socialPosts", req.params.id);
     assertRevision(source, revision);
-    checkPageActive(requirePage(store, source.pageId), "create");
+    if (source.pageId) checkPageActive(requirePage(store, source.pageId), "create");
     const duplicate = store.add("socialPosts", {
       projectId: source.projectId,
       pageId: source.pageId,
@@ -176,6 +179,8 @@ export function mountSocialRoutes(app, store) {
       linkUrl: source.linkUrl || "",
       linkLabel: source.linkLabel || "",
       sourceUrl: source.sourceUrl || "",
+      articleBody: source.articleBody || "",
+      researchId: source.researchId || null,
       mediaIds: [...source.mediaIds],
       scheduledAt: null,
       status: "draft",

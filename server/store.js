@@ -42,6 +42,7 @@ export class Store extends EventEmitter {
       socialPages: [],
       socialPosts: [],
       researchResults: [],
+      productionBatches: [],
       settings: {
         concurrency: 2,
         queuePaused: false,
@@ -54,10 +55,10 @@ export class Store extends EventEmitter {
         content: {
           storeName: "",
           storeUrl: "",
-          storeLinkLabel: "Xem sản phẩm",
+          storeLinkLabel: "Shop now",
           articleWebsiteName: "",
           articleWebsiteUrl: "",
-          articleLinkLabel: "Đọc bài đầy đủ",
+          articleLinkLabel: "Read the full article",
           productFirstCommentTemplate: "",
           newsFirstCommentTemplate: "",
         },
@@ -92,7 +93,7 @@ export class Store extends EventEmitter {
       }
     }
     let recovered = false;
-    for (const collection of ["socialPages", "socialPosts", "researchResults"]) {
+    for (const collection of ["socialPages", "socialPosts", "researchResults", "productionBatches"]) {
       if (this.state[collection] === undefined) {
         this.state[collection] = [];
         recovered = true;
@@ -107,6 +108,8 @@ export class Store extends EventEmitter {
       linkUrl: "",
       linkLabel: "",
       sourceUrl: "",
+      articleBody: "",
+      researchId: null,
       ...post,
     }));
     if (!this.state.settings || typeof this.state.settings !== "object") {
@@ -125,10 +128,10 @@ export class Store extends EventEmitter {
       content: {
         storeName: "",
         storeUrl: "",
-        storeLinkLabel: "Xem sản phẩm",
+        storeLinkLabel: "Shop now",
         articleWebsiteName: "",
         articleWebsiteUrl: "",
-        articleLinkLabel: "Đọc bài đầy đủ",
+        articleLinkLabel: "Read the full article",
         productFirstCommentTemplate: "",
         newsFirstCommentTemplate: "",
       },
@@ -169,6 +172,14 @@ export class Store extends EventEmitter {
       ...defaults.content,
       ...(this.state.settings.content || {}),
     };
+    if (this.state.settings.content.storeLinkLabel === "Xem sản phẩm") {
+      this.state.settings.content.storeLinkLabel = defaults.content.storeLinkLabel;
+      recovered = true;
+    }
+    if (this.state.settings.content.articleLinkLabel === "Đọc bài đầy đủ") {
+      this.state.settings.content.articleLinkLabel = defaults.content.articleLinkLabel;
+      recovered = true;
+    }
     this.state.settings.meta = {
       ...defaults.meta,
       ...(this.state.settings.meta || {}),

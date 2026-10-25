@@ -36,7 +36,7 @@ try {
   await dialog.getByLabel("Tiêu đề").fill("Tin nóng QA");
   await dialog.getByLabel("Caption").fill("Caption tin tức kiểm thử.");
   await dialog.getByLabel("First comment").fill("Đọc bài đầy đủ tại đây.");
-  await dialog.getByLabel("Link store / website").fill("https://example.com/news");
+  await dialog.getByLabel("Store / article link").fill("https://example.com/news");
   await dialog.getByRole("button", { name: "Tạo bản nháp" }).click();
   await dialog.waitFor({ state: "hidden" });
   await page.locator(".content-card").filter({ hasText: "Tin nóng QA" }).waitFor();
@@ -56,15 +56,18 @@ try {
   await page.locator(".render-hub").waitFor();
   assert.equal(await page.locator(".render-mode-tabs button").count(), 2);
   await page.locator(".render-mode-tabs button").nth(1).click();
+  assert.equal(await page.locator(".production-panel").count(), 1);
   assert.equal(await page.locator(".editor-heading .eyebrow").innerText(), "PRODUCT RENDER");
   await page.locator(".render-mode-tabs button").nth(0).click();
+  assert.equal(await page.locator(".production-panel").count(), 1);
   assert.equal(await page.locator(".editor-heading .eyebrow").innerText(), "NEWS RENDER");
   report.checks.push("Render workspace switches between News and Product without leaving the project");
   await page.getByRole("button", { name: "Tài khoản", exact: true }).click();
   await page.getByRole("button", { name: "Tạo profile xoay vòng" }).click();
   const slots = page.locator('[role="dialog"]');
   await slots.locator('input[type="number"]').fill("3");
-  await slots.getByRole("button", { name: "Tạo 3 slot" }).click();
+  await slots.getByRole("checkbox", { name: "Start registration now" }).uncheck();
+  await slots.getByRole("button", { name: "Create 3 profiles" }).click();
   await slots.waitFor({ state: "hidden" });
   const slotState = await page.evaluate(async () => (await fetch("/api/state")).json());
   assert.equal(slotState.accounts.filter((account) => account.provider === "dreamface").length, 3);

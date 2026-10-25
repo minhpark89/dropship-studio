@@ -31,6 +31,7 @@ export function AccountsPage({ data, run, notify }) {
   const [filter, setFilter] = useState("all");
   const [slotCount, setSlotCount] = useState(5);
   const [slotPrefix, setSlotPrefix] = useState("DreamFace profile");
+  const [connectNewProfiles,setConnectNewProfiles]=useState(true);
   const accounts = data.accounts.filter(
     (account) => filter === "all" || account.provider === filter,
   );
@@ -89,11 +90,17 @@ export function AccountsPage({ data, run, notify }) {
       count: Number(slotCount),
       namePrefix: slotPrefix,
     }));
-    setBusy("");
     if (result) {
-      notify(`Đã tạo ${result.created} profile DreamFace local. Nhập email của bạn ở từng profile để hoàn tất xác minh.`);
       close();
+      notify(`Created ${result.created} profiles with saved sign-in details.`);
+      if(connectNewProfiles) {
+        for(const account of result.accounts) {
+          const connected=await action(account.id,"login");
+          if(connected?.status!=="ready")break;
+        }
+      }
     }
+    setBusy("");
   };
   return (
     <div className="page">
@@ -258,7 +265,7 @@ export function AccountsPage({ data, run, notify }) {
                   onClick={() => action(account.id, "login")}
                 >
                   <LogIn size={13} />
-                  Đăng nhập
+                  {account.provider === "dreamface" && account.hasCredentials ? "Connect saved profile" : "Đăng nhập"}
                 </button>
                 <button
                   className="text-button"
@@ -304,7 +311,7 @@ export function AccountsPage({ data, run, notify }) {
         <ShieldCheck size={17} />
         <span>
           Tài khoản dùng hồ sơ Chrome riêng, hoặc hồ sơ Google bạn chọn dùng chung.
-          Mật khẩu không được lưu trong dự án. Cookie được giữ trên máy.
+          DreamFace sign-in details are encrypted and saved on this PC. Cookies remain in each browser profile.
         </span>
       </div>
       {modal?.type === "reuse-google" && (
@@ -368,7 +375,7 @@ export function AccountsPage({ data, run, notify }) {
                   {form.provider === "dola" && (
                     <option value="apple">Apple / iCloud</option>
                   )}
-                  {form.provider === "dreamface" && <option value="credentials">Email + má»­t kháº©u DreamFace</option>}
+                  {form.provider === "dreamface" && <option value="credentials">DreamFace email + password</option>}
                   <option value="cookie">Nhập cookie</option>
                 </select>
               </Field>
@@ -409,8 +416,8 @@ export function AccountsPage({ data, run, notify }) {
             ) : (
               <>
                 <Field
-                  label="Mật khẩu (tùy chọn, chỉ dùng lần này)"
-                  hint="Bạn có thể để trống và đăng nhập trực tiếp trong cửa sổ Google/Apple."
+                  label={form.provider === "dreamface" ? "DreamFace password (saved for reuse)" : "Mật khẩu (tùy chọn, chỉ dùng lần này)"}
+                  hint={form.provider === "dreamface" ? "Saved on this PC for future connections." : "Bạn có thể để trống và đăng nhập trực tiếp trong cửa sổ Google/Apple."}
                 >
                   <input
                     type="password"
@@ -456,19 +463,20 @@ export function AccountsPage({ data, run, notify }) {
         </Modal>
       )}
       {modal?.type === "bulk-slots" && (
-        <Modal title="Tạo profile DreamFace xoay vòng" onClose={close}>
+        <Modal title="Create DreamFace profiles" onClose={close}>
           <form onSubmit={createSlots}>
             <Notice>
-              Profile được tạo local để dùng luân phiên trong các ngày sau. Studio không tự tạo email bên ngoài, không đăng ký tài khoản thay bạn và không vượt CAPTCHA/MFA; mỗi profile vẫn cần email, mật khẩu hoặc cookie do bạn sở hữu.
+              Each profile gets a random Gmail-formatted address and password, saved for future use. This creates sign-in details, not a Gmail inbox. DreamFace may ask you to verify registration in its window.
             </Notice>
             <div className="form-grid">
-              <Field label="Số lượng slot"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
-              <Field label="Tiền tố tên"><input maxLength="80" value={slotPrefix} onChange={(event) => setSlotPrefix(event.target.value)} /></Field>
+              <Field label="Number of profiles"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
+              <Field label="Profile name prefix"><input maxLength="80" value={slotPrefix} onChange={(event) => setSlotPrefix(event.target.value)} /></Field>
             </div>
-            <Field label="Cách dùng" hint="Sau khi tạo, lọc DreamFace trong danh sách rồi đăng nhập từng profile. Khi render để Tự chọn, hàng đợi sẽ ưu tiên profile chưa dùng trong ngày.">
+            <label className="check-field"><input type="checkbox" checked={connectNewProfiles} onChange={event=>setConnectNewProfiles(event.target.checked)}/> Start registration now</label>
+            <Field label="Render selection" hint="Auto uses connected profiles and prioritizes those not used today. Registration pauses when DreamFace asks for verification; use Connect saved profile to continue.">
               <input value="Daily rotation · profile ready" readOnly />
             </Field>
-            <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" busy={busy === "bulk-slots"}><Plus size={15} /> Tạo {slotCount} slot</Button></div>
+            <div className="modal-actions"><Button type="button" onClick={close}>Cancel</Button><Button variant="primary" busy={busy === "bulk-slots"}><Plus size={15} /> Create {slotCount} profiles</Button></div>
           </form>
         </Modal>
       )}

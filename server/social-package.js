@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { StudioError } from "./store.js";
 
-const packageNames = new Set(["post.json", "caption.txt", "first-comment.txt", "manifest.json"]);
+const packageNames = new Set(["post.json", "caption.txt", "first-comment.txt", "article.md", "manifest.json"]);
 const mediaName = /^media\.(?:jpg|jpeg|png|gif|webp|mp4|mov|webm|m4v|mkv|avi)$/i;
 const locks = new Set();
 
@@ -61,6 +61,8 @@ export async function createPostPackage(store, post) {
       linkUrl: post.linkUrl || "",
       linkLabel: post.linkLabel || "",
       sourceUrl: post.sourceUrl || "",
+      articleBody: post.articleBody || "",
+      researchId: post.researchId || null,
       notes: post.notes,
       scheduledAt: post.scheduledAt,
       status: post.status,
@@ -78,6 +80,11 @@ export async function createPostPackage(store, post) {
       { name: "caption.txt", size: captionBytes.length, sha256: createHash("sha256").update(captionBytes).digest("hex") },
       { name: "first-comment.txt", size: firstCommentBytes.length, sha256: createHash("sha256").update(firstCommentBytes).digest("hex") },
     ];
+    if (post.articleBody) {
+      const articleBytes = Buffer.from(`${post.articleBody}\n`, "utf8");
+      await fsp.writeFile(path.join(temporary, "article.md"), articleBytes, {mode:0o600});
+      files.push({name:"article.md",size:articleBytes.length,sha256:createHash("sha256").update(articleBytes).digest("hex")});
+    }
     if (media) {
       const extension = path.extname(media.file).toLowerCase() || ".bin";
       const name = `media${extension}`;

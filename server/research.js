@@ -11,12 +11,13 @@ import {
 } from "../shared/research-contracts.js";
 import { StudioError } from "./store.js";
 import { importMedia } from "./media.js";
-import { downloadImageAsset, searchImageQueries } from "./image-search.js";
+import { downloadImageAsset, searchImageQueries, newsImageCandidates } from "./image-search.js";
 import { buildResearchAssemblyTimeline } from "../shared/research-assembly.js";
+import { readChatCompletion } from "./llm-response.js";
 
 const DEFAULT_FEEDS = [
+  "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml",
   "https://feeds.bbci.co.uk/news/rss.xml",
-  "https://vnexpress.net/rss/tin-moi-nhat.rss",
 ];
 const MAX_FEED_BYTES = 1024 * 1024;
 const MAX_FEED_ITEMS = 40;
@@ -216,7 +217,7 @@ async function requestLlm({ settings, request, articles, fetchImpl }) {
     output: {
       headline: "short headline",
       angle: "editorial angle",
-      script: "short video script",
+      script: "Five short narration sentences, one per line, 6-10 words each, for a 15-second news video",
       imageQueries: ["query"],
     },
   };
@@ -232,17 +233,17 @@ async function requestLlm({ settings, request, articles, fetchImpl }) {
       signal: controller.signal,
       body: JSON.stringify({
         model: settings.model,
+        stream: false,
         temperature: 0.2,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: "Return only valid JSON with headline, angle, script, and imageQueries." },
+          { role: "system", content: "Return only valid JSON with headline, angle, script, and imageQueries. Write in American English for a US audience. Base every factual claim on the supplied article titles and summaries. Do not invent dates, numbers, quotes, or events. Keep the headline under 55 characters. Write the script as five concise narration sentences, one per line, for a 15-second news video. No timestamps, scene directions, Visual/VO labels, markdown, or production notes. Image queries must be in English and describe relevant editorial images. If no sources are supplied, do not invent a news story." },
           { role: "user", content: JSON.stringify(prompt) },
         ],
       }),
     });
     if (!response.ok) throw new Error(`LLM HTTP ${response.status}`);
-    const body = await response.json();
-    const content = body?.choices?.[0]?.message?.content ?? body?.output ?? body;
+    const content = await readChatCompletion(response);
     return parseModelContent(content);
   } finally {
     clearTimeout(timer);
@@ -252,11 +253,11 @@ async function requestLlm({ settings, request, articles, fetchImpl }) {
 function fallbackContent(request, articles) {
   const headline = articles[0]?.title || request.topic;
   const angle = articles.length
-    ? `Tổng hợp ${articles.length} nguồn tin về ${request.topic}, ưu tiên thông tin có thể kiểm chứng.`
-    : `Bản tóm lược ban đầu về ${request.topic}; cần bổ sung nguồn trước khi xuất bản.`;
+    ? `A source-based summary of ${request.topic} from ${articles.length} reports.`
+    : `Research draft on ${request.topic}; sources are needed before publication.`;
   const script = articles.length
     ? `${headline}. ${articles.slice(0, 3).map((article) => article.summary || article.title).join(" ")}`.slice(0, 4000)
-    : `Đây là bản nháp nghiên cứu về ${request.topic}. Hãy kiểm tra nguồn và cập nhật thông tin trước khi sử dụng.`;
+    : `Research draft on ${request.topic}. Verify sources and update the facts before use.`;
   const imageQueries = [request.topic, ...articles.slice(0, 3).map((article) => article.title)].filter(Boolean).slice(0, 30);
   return { headline, angle, script, imageQueries };
 }
@@ -341,12 +342,25 @@ function validateFeedUrls(feeds) {
 export function createResearchService({ fetchImpl = globalThis.fetch, now = () => new Date().toISOString() } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("Fetch implementation is required");
   return {
-    async research(requestInput, store) {
+    async discover({ topic, feeds = [], count = 12 }) {
+      const warnings = [];
+      const sources = feeds.length ? feeds : [
+        `https://news.google.com/rss/search?q=${encodeURIComponent(`${topic} when:1d`)}&hl=en-US&gl=US&ceid=US:en`,
+      ];
+      const entries = await fetchFeeds(validateFeedUrls(sources), fetchImpl, warnings);
+      const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
+      const today = day.format(new Date(now()));
+      const current = entries.filter(article => article.publishedAt && day.format(new Date(article.publishedAt)) === today);
+      const articles = dedupeArticles(current, { topic, maxArticles: count }).filter(article => article.relevance > 0);
+      if (!articles.length) throw new StudioError("No matching reports from today (US Eastern time). Try a broader niche or another RSS feed.", "NO_CURRENT_NEWS", 422);
+      return { articles, warnings };
+    },
+    async research(requestInput, store, { articles: selectedArticles } = {}) {
       const request = researchRequestSchema.parse(requestInput);
       store.require("projects", request.projectId);
       const warnings = [];
       const feeds = validateFeedUrls(request.feeds?.length ? request.feeds : DEFAULT_FEEDS);
-      const rawArticles = await fetchFeeds(feeds, fetchImpl, warnings);
+      const rawArticles = selectedArticles || await fetchFeeds(feeds, fetchImpl, warnings);
       const articles = dedupeArticles(rawArticles, { maxArticles: request.maxArticles, topic: request.topic });
       let content;
       const llm = llmSettingsSchema.parse(store.state.settings?.llm || {});
@@ -477,11 +491,13 @@ export function mountResearchRoutes(app, store, options = {}) {
       imageSearchResults = searched.images.map((image) => researchImageSchema.parse(image));
       warnings = [...new Set([...warnings, ...searched.warnings])];
     }
-    if (!imageSearchResults.length && !(result.imageMediaIds || []).length) {
+    if (!newsImageCandidates(result.articles,imageSearchResults).length && !(result.imageMediaIds || []).length) {
       throw new StudioError("LLM chưa tìm được ảnh công khai để dựng video.", "IMAGE_SEARCH_EMPTY", 502);
     }
     const existingMediaIds = [...new Set(result.imageMediaIds || [])];
-    const selected = imageSearchResults.slice(0, 8);
+    // Keep the one-click news cut close to the reference short: five images
+    // at three seconds each keeps the first review render around 15 seconds.
+    const selected = newsImageCandidates(result.articles,imageSearchResults).slice(0, 5);
     const missing = selected.slice(existingMediaIds.length);
     const imported = [];
     for (const image of missing) {
@@ -492,7 +508,7 @@ export function mountResearchRoutes(app, store, options = {}) {
         warnings.push(`${image.title || image.query}: ${error.message}`);
       }
     }
-    const imageMediaIds = [...new Set([...existingMediaIds, ...imported.map((item) => item.mediaId)])].slice(0, 12);
+    const imageMediaIds = [...new Set([...existingMediaIds, ...imported.map((item) => item.mediaId)])].slice(0, 5);
     if (!imageMediaIds.length) throw new StudioError("Không tải được ảnh công khai để dựng video.", "IMAGE_IMPORT_EMPTY", 502);
     const updatedResult = store.patch("researchResults", result.id, {
       imageSearchResults,
@@ -520,7 +536,7 @@ export function mountResearchRoutes(app, store, options = {}) {
       projectId: project.id,
       name: `News auto · ${updatedResult.headline || updatedResult.topic}`,
       timeline: assembly.timeline,
-    }) || null;
+    }, { production: { contentType: "news", researchId: result.id, topic: result.topic } }) || null;
     res.status(201).json({
       result: updatedResult,
       project: updatedProject,

@@ -22,8 +22,14 @@ import { mountSocialRoutes } from "./social.js";
 import { mountResearchRoutes } from "./research.js";
 import { mountMetaRoutes } from "./meta.js";
 import { createDreamFaceProvider } from "./providers/dreamface.js";
+import { createDreamFaceSlots, saveDreamFaceCredentials } from "./dreamface-accounts.js";
+import { SecretStore } from "./secret-store.js";
+import { mountProductionRoutes } from "./production.js";
+import { mountContentRoutes } from "./content.js";
+import { mountWebsiteRoutes } from "./website.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const APP_VERSION = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 export async function startServer({
   port = Number(process.env.PORT || 4318),
@@ -131,12 +137,15 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       tools: await checkTools(store.state.settings),
       browser,
       dataDir: store.root,
-      version: "0.3.2",
+      version: APP_VERSION,
     });
   });
 
   mountSocialRoutes(app, store);
+  mountContentRoutes(app, store);
+  mountWebsiteRoutes(app, store);
   mountResearchRoutes(app, store, { queue });
+  const production = mountProductionRoutes(app, store, queue);
   mountMetaRoutes(app, store);
 
   const checkAccount = async (id) => {
@@ -149,9 +158,17 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
   const loginAccount = async (id, credentials) => {
     const account = store.require("accounts", id);
     if (account.provider !== "dreamface") return browsers.login(id, credentials);
-    const result = await dreamface.login(account, credentials);
-    store.patch("accounts", id, result);
-    return result;
+    if(["busy","checking"].includes(account.status))throw new StudioError("This profile is in use. Wait for its current task to finish.","PROFILE_BUSY",409);
+    const saved=saveDreamFaceCredentials(store,account,credentials);
+    store.patch("accounts",id,{status:"checking",message:"Connecting to DreamFace…"});
+    try {
+      const result = await dreamface.login(account, saved);
+      store.patch("accounts", id, result);
+      return result;
+    } catch(error) {
+      store.patch("accounts",id,{status:"needs_login",message:"DreamFace connection failed. Reconnect this saved profile."});
+      throw error;
+    }
   };
   const importAccountCookies = async (id, input) => {
     const account = store.require("accounts", id);
@@ -318,19 +335,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       count: z.number().int().min(1).max(100),
       namePrefix: z.string().trim().min(1).max(80).default("DreamFace slot"),
     }).parse(req.body || {});
-    const accounts = Array.from({ length: input.count }, (_, index) => store.add("accounts", {
-      name: `${input.namePrefix} ${String(index + 1).padStart(2, "0")}`,
-      provider: input.provider,
-      loginMethod: "credentials",
-      email: "",
-      proxy: "",
-      status: "needs_login",
-      message: "Profile local đã tạo. Nhập email của bạn và hoàn tất đăng nhập/xác minh DreamFace trước khi dùng.",
-      rotationIndex: index + 1,
-      rotationEnabled: true,
-      rotationMode: "daily",
-      rotationDay: "",
-    }));
+    const accounts = createDreamFaceSlots(store,input);
     res.status(201).json({ accounts, created: accounts.length });
   });
   app.post("/api/accounts/:id/check", async (req, res) =>
@@ -383,7 +388,9 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
   app.delete("/api/accounts/:id", async (req, res) => {
     const account = store.require("accounts", req.params.id);
     if (account.provider === "dreamface") await dreamface.close(account);
-    res.json(await browsers.deleteAccount(req.params.id));
+    const result=await browsers.deleteAccount(req.params.id);
+    if(account.provider==="dreamface")new SecretStore(store.root).delete(`dreamface-${account.id}`);
+    res.json(result);
   });
 
   app.post("/api/jobs/generate", (req, res) => {
@@ -484,6 +491,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     try {
       for (const stream of streams) stream.end();
       clearTimeout(changeTimer);
+      await production.close();
       await queue.close();
       await browsers.closeAll();
       await Promise.allSettled(

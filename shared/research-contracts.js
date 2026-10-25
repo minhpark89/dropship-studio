@@ -13,8 +13,8 @@ export const llmSettingsSchema = z.object({
 export const researchRequestSchema = z.object({
   projectId: id,
   topic: z.string().trim().min(2).max(200),
-  niche: z.string().trim().min(2).max(120).default("Tin tức tổng hợp"),
-  language: z.enum(["vi", "en"]).default("vi"),
+  niche: z.string().trim().min(2).max(120).default("General news"),
+  language: z.literal("en").default("en"),
   feeds: z.array(z.string().url()).max(12).optional(),
   maxArticles: z.number().int().min(1).max(12).default(6),
   includeImages: z.boolean().default(true),

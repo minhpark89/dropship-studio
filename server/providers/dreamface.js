@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { chromium } from "playwright";
 import { providers } from "../../shared/contracts.js";
-import { importMedia, probe } from "../media.js";
+import { importMedia, probe, binary, runProcess } from "../media.js";
 import { StudioError } from "../store.js";
 
 export const DREAMFACE_PROVIDER = "dreamface";
@@ -32,6 +32,8 @@ async function firstVisible(locators) {
 }
 
 async function dismissDreamFacePromos(page) {
+  const dismiss=page.getByText("Close",{exact:true}).first();
+  if(await dismiss.isVisible().catch(()=>false))await dismiss.click().catch(()=>{});
   const dialogs = page.locator('[role="dialog"]:visible');
   const count = await dialogs.count().catch(() => 0);
   for (let index = 0; index < count; index += 1) {
@@ -46,6 +48,7 @@ async function dismissDreamFacePromos(page) {
 }
 
 async function openDreamFaceLogin(page) {
+  await page.getByText(/^Log\s*in\s*\/\s*Sign\s*up$/i).first().waitFor({state:"visible",timeout:15000}).catch(()=>{});
   await dismissDreamFacePromos(page);
   const email = page.locator('input[type="email"]:visible').first();
   const password = page.locator('input[type="password"]:visible').first();
@@ -145,11 +148,7 @@ async function configureDreamFace(page, task) {
     page.getByRole("button", { name: /^(?:Setting|Settings|Preferences)$/i }),
     page.locator('button[aria-label="Settings"]'),
   ]);
-  // The current DreamFace home composer exposes its mode through the
-  // composer toolbar and no longer has the old Setting button. In that UI,
-  // generation uses the account's selected video defaults; keep the flow
-  // usable and let the site own the current duration/ratio controls.
-  if (!settingButton) return;
+  if (!settingButton) throw providerError("DreamFace video settings are unavailable. Open the profile and check the Video tool.","PROVIDER_NOT_READY");
   await settingButton.click();
   const dialog = page.locator('[role="dialog"]:visible').last();
   if (!(await dialog.isVisible().catch(() => false))) throw providerError("Không mở được cài đặt DreamFace.", "PROVIDER_NOT_READY");
@@ -170,7 +169,41 @@ async function configureDreamFace(page, task) {
     throw providerError(`DreamFace không có lựa chọn tỷ lệ ${task.ratio}.`, "UNSUPPORTED_RATIO");
   }
   await ratio.click();
+  const selected=await ratio.locator("..").getAttribute("class");
+  if(!/active|selected|checked/i.test(selected||""))throw providerError("DreamFace did not confirm the selected video ratio.","PROVIDER_NOT_READY");
   await settingButton.click().catch(() => {});
+}
+
+export async function prepareDreamFaceReferences(store,page,task) {
+  const references=(task.references||[]).map(id=>store.require("media",id));
+  if(references.some(media=>media.kind!=="image"||media.projectId&&media.projectId!==task.projectId))throw providerError("Choose reference images from this project.","INVALID_REFERENCE");
+  const mode=references.length>1?"References to Video":"Image or Text";
+  const tab=page.getByText(mode,{exact:true}).first();
+  if(!await tab.isVisible())throw providerError("The DreamFace reference mode is unavailable.","PROVIDER_NOT_READY");
+  await tab.click();
+  if(!references.length)return [];
+  const temporary=[];
+  try {
+    const files=[];
+    for(const media of references) {
+      if(/\.(png|jpe?g)$/i.test(media.file))files.push(media.file);
+      else {
+        const file=path.join(store.root,"temp",`${randomUUID()}.png`);
+        temporary.push(file);
+        await runProcess(binary("ffmpeg",store.state.settings),["-y","-i",media.file,"-frames:v","1",file]);
+        files.push(file);
+      }
+    }
+    const inputs=page.locator('input[type="file"]');let selected;
+    for(let i=0;i<await inputs.count();i++) {
+      const candidate=inputs.nth(i);
+      if(await candidate.locator("..").isVisible()&&(files.length===1||await candidate.getAttribute("multiple")!==null)){selected=candidate;break;}
+    }
+    if(!selected)throw providerError("DreamFace's image upload control is unavailable.","PROVIDER_NOT_READY");
+    await selected.setInputFiles(files);
+    await selected.locator("..").locator("..").locator("img").first().waitFor({state:"visible",timeout:30000});
+    return temporary;
+  } catch(error) {await Promise.all(temporary.map(file=>fs.rm(file,{force:true})));throw error;}
 }
 
 function validateProxy(value) {
@@ -263,8 +296,8 @@ function executableFrom(store, explicit) {
 
 /**
  * Playwright-owned DreamFace profile. Automation is headless by default. Login
- * always opens a visible window and requires credentials or cookies supplied by
- * the caller; this provider never registers accounts or bypasses CAPTCHA.
+ * opens a visible window for sign-in and registration. Verification remains
+ * in the service's own UI; only a verified session can enter the render queue.
  */
 export class DreamFaceProvider {
   constructor({ store, browserType = chromium, executablePath } = {}) {
@@ -324,7 +357,10 @@ export class DreamFaceProvider {
   async inspect(account, session, { navigate = false } = {}) {
     const page = session.page.isClosed() ? await session.context.newPage() : session.page;
     session.page = page;
-    if (navigate || page.url() === "about:blank") await page.goto(DREAMFACE_URL, { waitUntil: "domcontentloaded", timeout: 45000 });
+    if (navigate || page.url() === "about:blank") {
+      await page.goto(DREAMFACE_URL, { waitUntil: "domcontentloaded", timeout: 45000 });
+      await page.locator('[contenteditable="true"],textarea,input[type="email"],a[href*="login"]').first().waitFor({state:"visible",timeout:10000}).catch(()=>{});
+    }
     await dismissDreamFacePromos(page);
     const body = await page.locator("body").innerText({ timeout: 10000 }).catch(() => "");
     const cookies = await session.context.cookies();
@@ -347,15 +383,17 @@ export class DreamFaceProvider {
   }
 
   async check(account) {
-    const session = await this.open(account, { visible: false });
-    const result = await this.inspect(account, session, { navigate: true });
+    if(account.status==="busy")throw providerError("This profile is rendering. Wait for it to finish.","PROFILE_BUSY",409);
+    const existing=this.sessions.get(account.id);
+    const session = existing?.visible&&!existing.page.isClosed()?existing:await this.open(account, { visible: false });
+    const result = await this.inspect(account, session, { navigate: !existing?.visible });
     return { ...result, checkedAt: new Date().toISOString() };
   }
 
   async login(account, input = {}) {
     const cookies = input.cookies ? parseDreamFaceCookies(input.cookies) : null;
     const hasCredentials = Boolean(input.email && input.password);
-    if (!cookies && !hasCredentials) throw providerError("Đăng nhập DreamFace cần email + mật khẩu do người dùng cung cấp hoặc cookie hợp lệ.", "CREDENTIALS_REQUIRED");
+    if (!cookies && !hasCredentials) throw providerError("Enter DreamFace email and password, or create a profile with saved sign-in details.", "CREDENTIALS_REQUIRED");
     if (input.email && !/^\S+@\S+\.\S+$/.test(input.email)) throw providerError("Email DreamFace không hợp lệ.", "INVALID_CREDENTIALS");
     const session = await this.open(account, { visible: true });
     if (cookies) {
@@ -365,7 +403,7 @@ export class DreamFaceProvider {
     await session.page.goto(DREAMFACE_URL, { waitUntil: "domcontentloaded", timeout: 45000 });
     const fields = await openDreamFaceLogin(session.page);
     if (!fields) {
-      return { status: "needs_login", authStep: "service", message: "Cửa sổ DreamFace đã mở. Hoàn tất đăng nhập trong cửa sổ; provider không tự đăng ký tài khoản." };
+      return { status: "needs_login", authStep: "service", message: "DreamFace is open. Complete sign-in or registration in its window, then check the session." };
     }
     const { email: emailField, password: passwordField } = fields;
     await emailField.fill(input.email);
@@ -376,7 +414,12 @@ export class DreamFaceProvider {
     ]);
     if (submit) await submit.click().catch(() => passwordField.press("Enter"));
     else await passwordField.press("Enter");
-    return { status: "needs_login", authStep: "identity", message: "Đã điền thông tin do bạn cung cấp trong cửa sổ DreamFace. Hoàn tất MFA/xác minh nếu có rồi kiểm tra lại." };
+    await Promise.race([
+      passwordField.waitFor({state:"hidden",timeout:12000}),
+      session.page.locator('iframe[src*="captcha"]:visible').first().waitFor({state:"visible",timeout:12000}),
+    ]).catch(()=>{});
+    const result=await this.inspect(account,session);
+    return {...result,message:result.status==="ready"?"DreamFace is connected. This saved profile can render videos.":result.status==="verification"?"DreamFace needs CAPTCHA verification. Complete it in the open window, then click Check session.":"Sign-in details are saved. Complete registration in the DreamFace window, then click Check session."};
   }
 
   async importCookies(account, input) {
@@ -402,8 +445,8 @@ export class DreamFaceProvider {
    */
   async generate(store, job, account, signal, update) {
     if (job.payload.kind !== "video") throw providerError("DreamFace hiện chỉ hỗ trợ tạo video.", "UNSUPPORTED_KIND");
-    if (job.payload.mode !== "text" || job.payload.references?.length) {
-      throw providerError("DreamFace hiện chỉ hỗ trợ prompt văn bản; hãy bỏ ảnh tham chiếu.", "UNSUPPORTED_MODE");
+    if (!["text","reference"].includes(job.payload.mode)) {
+      throw providerError("DreamFace supports text and reference images for this workflow.", "UNSUPPORTED_MODE");
     }
     const session = await this.open(account, { visible: false });
     const state = await this.inspect(account, session, { navigate: true });
@@ -411,8 +454,10 @@ export class DreamFaceProvider {
       throw providerError(state.message, state.status === "verification" ? "VERIFICATION" : "NEEDS_LOGIN", 401);
     }
     const { page } = session;
+    const temporaryReferences=await prepareDreamFaceReferences(store,page,{...job.payload,projectId:job.projectId});
     const prompt = await dreamFaceComposer(page);
     if (!prompt) {
+      await Promise.all(temporaryReferences.map(file=>fs.rm(file,{force:true})));
       throw providerError("Không tìm thấy ô prompt DreamFace. Giao diện dịch vụ có thể đã thay đổi.", "PROVIDER_NOT_READY");
     }
     const baseline = new Set(await page.locator("video:visible, video source:visible").evaluateAll((nodes) => nodes.map((node) => node.currentSrc || node.src).filter(Boolean)));
@@ -433,6 +478,7 @@ export class DreamFaceProvider {
       await prompt.fill(String(job.payload.prompt || "").slice(0, 1500));
       const send = await firstVisible([
         page.getByRole("button", { name: /^Send$/i }),
+        page.getByRole("button", { name: /^\d+\s+Free\s+Daily$/i }),
         page.locator('button[aria-label="Send"]'),
         prompt.locator("xpath=ancestor::*[contains(@class, 'generator')][1]").locator('button[aria-label="Send"]:visible'),
       ]);
@@ -469,6 +515,7 @@ export class DreamFaceProvider {
       throw providerError("Hết thời gian theo dõi DreamFace. Yêu cầu có thể vẫn đang chạy; kiểm tra trong tài khoản trước khi tạo lại.", "PROVIDER_TIMEOUT", 408);
     } finally {
       page.off("response", responseListener);
+      await Promise.all(temporaryReferences.map(file=>fs.rm(file,{force:true})));
     }
   }
 

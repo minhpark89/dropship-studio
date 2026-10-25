@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import { Button, Field, Badge, Empty, Notice } from "../components.jsx";
+import { WebsiteSettings } from "./WebsiteSettings.jsx";
 
 export function QueuePage({ data, project, run, navigate }) {
   const [filter, setFilter] = useState("all");
@@ -751,6 +752,7 @@ export function SettingsPage({ data, project, run, notify }) {
             </div>
           </form>
         </section>
+        <WebsiteSettings settings={data.settings?.website} notify={notify} />
         <section className="panel settings-content-panel">
           <div className="panel-heading">
             <h3><Globe2 size={18} /> Content · Store &amp; website</h3>

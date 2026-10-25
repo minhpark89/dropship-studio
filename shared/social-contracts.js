@@ -55,7 +55,7 @@ export const socialPagePatchSchema = socialPageSchema.partial().extend({
 
 export const socialPostSchema = z.object({
   projectId: uuid,
-  pageId: uuid,
+  pageId: uuid.or(z.literal("")).default(""),
   pageGroupId: z.string().trim().max(120).default(""),
   tokenGroupId: z.string().trim().max(120).default(""),
   contentType: z.enum(["product", "news"]).default("product"),
@@ -65,6 +65,8 @@ export const socialPostSchema = z.object({
   linkUrl: webLink.default(""),
   linkLabel: text(160).default(""),
   sourceUrl: webLink.default(""),
+  articleBody: text(60000).default(""),
+  researchId: uuid.nullable().default(null),
   mediaIds: z.array(uuid).max(1).default([]),
   scheduledAt: z.string().datetime({ offset: true }).nullable().default(null),
   status: z.enum(["draft", "ready", "scheduled"]).default("draft"),

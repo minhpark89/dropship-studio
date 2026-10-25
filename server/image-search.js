@@ -4,6 +4,20 @@ import { randomUUID } from "node:crypto";
 import { importMedia } from "./media.js";
 
 export const WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php";
+
+export function editorialImages(images) {
+  return images.filter(image => (!image.mime || image.mime.startsWith("image/")) && image.mime !== "image/svg+xml" && !/\.(?:pdf|djvu|svg|webm)(?:\b|\/)/i.test(image.title+" "+image.imageUrl) && !/\b(?:logo|icon|wordmark|flag|seal|insignia|stamp|poster|diagram|document)\b/i.test(image.title) && (!image.width || image.width >= 500) && (!image.height || image.height >= 400));
+}
+
+export function newsImageCandidates(articles,images=[]) {
+  const sourceImages=(articles||[]).filter(article=>article.imageUrl&&isPublicImageUrl(article.imageUrl)).map(article=>{
+    const url=new URL(article.imageUrl);
+    if(url.hostname==="ichef.bbci.co.uk")url.pathname=url.pathname.replace(/\/standard\/\d+\//,"/standard/1280/");
+    return {id:`article:${article.id}`,query:article.title,title:article.title,imageUrl:url.toString(),pageUrl:article.url,width:0,height:0,mime:"image/jpeg",license:"",attribution:article.source||""};
+  });
+  const seen=new Set();
+  return [...sourceImages,...editorialImages(images)].filter(image=>{if(seen.has(image.imageUrl))return false;seen.add(image.imageUrl);return true;});
+}
 const MAX_QUERY_LENGTH = 300;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -79,9 +93,9 @@ export async function searchWikimediaImages(query, { fetchImpl = globalThis.fetc
     format: "json",
     origin: "*",
     generator: "search",
-    gsrsearch: normalized,
+    gsrsearch: `${normalized} filetype:bitmap`,
     gsrnamespace: "6",
-    gsrlimit: String(Math.min(20, Math.max(1, maxResults))),
+    gsrlimit: String(Math.min(20, Math.max(1, maxResults * 2))),
     prop: "imageinfo",
     iiprop: "url|size|mime|extmetadata",
     iiurlwidth: "1600",
@@ -94,7 +108,7 @@ export async function searchWikimediaImages(query, { fetchImpl = globalThis.fetc
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`Wikimedia HTTP ${response.status}`);
-    return parseWikimediaImages(JSON.parse(await boundedText(response)), normalized, maxResults);
+    return editorialImages(parseWikimediaImages(JSON.parse(await boundedText(response)), normalized,20)).slice(0,maxResults);
   } finally {
     clearTimeout(timer);
   }
@@ -102,20 +116,21 @@ export async function searchWikimediaImages(query, { fetchImpl = globalThis.fetc
 
 export async function searchImageQueries(queries, { fetchImpl = globalThis.fetch, maxResultsPerQuery = 4, maxResults = 24, concurrency = 2 } = {}) {
   const uniqueQueries = [...new Set((Array.isArray(queries) ? queries : []).map(cleanQuery).filter(Boolean))].slice(0, 12);
-  const images = [];
+  const results = new Array(uniqueQueries.length);
   const warnings = [];
   let cursor = 0;
   async function worker() {
     while (cursor < uniqueQueries.length) {
-      const query = uniqueQueries[cursor++];
+      const index=cursor++;const query = uniqueQueries[index];
       try {
-        images.push(...await searchWikimediaImages(query, { fetchImpl, maxResults: maxResultsPerQuery }));
+        results[index]=await searchWikimediaImages(query, { fetchImpl, maxResults: maxResultsPerQuery });
       } catch {
         warnings.push(`Không thể tìm ảnh Wikimedia cho "${query}".`);
       }
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, uniqueQueries.length || 1) }, () => worker()));
+  const images=results.flatMap(items=>items||[]);
   const seen = new Set();
   const deduped = images.filter((image) => {
     if (seen.has(image.imageUrl)) return false;
@@ -149,11 +164,12 @@ export async function downloadImageAsset({ image, store, projectId, fetchImpl = 
   const temporary = path.join(store.root, "temp", `${randomUUID()}${extension}`);
   await fs.writeFile(temporary, bytes, { flag: "wx" });
   try {
-    return await importMedia(store, temporary, {
+    const media=await importMedia(store, temporary, {
       projectId,
       name: `${String(image.title || "Wikimedia image").slice(0, 100)}${extension}`,
       move: true,
     });
+    return store.patch("media",media.id,{sourceUrl:image.pageUrl||image.imageUrl,attribution:image.attribution||"",license:image.license||""});
   } finally {
     await fs.rm(temporary, { force: true }).catch(() => {});
   }

@@ -11,6 +11,44 @@ function cleanText(value, maxLength) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
+function wrapOverlayText(value, { maxChars = 32, maxLines = 2 } = {}) {
+  const source = cleanText(value, 500);
+  if (!source) return "";
+  const words = source.split(/\s+/);
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (!line || candidate.length <= maxChars) {
+      line = candidate;
+      continue;
+    }
+    lines.push(line);
+    line = word;
+    if (lines.length === maxLines) break;
+  }
+  if (lines.length < maxLines && line) lines.push(line);
+  const visible = lines.slice(0, maxLines);
+  const shown = visible.join(" ");
+  if (shown.length < source.length && visible.length) {
+    visible[visible.length - 1] = `${visible[visible.length - 1].replace(/[.…]+$/u, "")}…`;
+  }
+  return visible.join("\n");
+}
+
+function narrationSentences(value) {
+  // Extract narration before splitting sentences. Otherwise a Visual sentence
+  // becomes a caption and a following VO sentence loses its scene context.
+  return String(value || "").slice(0, 12000).split(/\r?\n/)
+    .flatMap((line) => {
+      const normalized = line.replace(/^\s*\[[^\]]+\]\s*/u, "").trim();
+      const voiceover = normalized.match(/(?:^|\s)(?:VO|Voiceover|Narration):\s*(.+)$/iu)?.[1];
+      if (!voiceover && /^(?:Visual|End card|Scene|SFX|Music):/iu.test(normalized)) return [];
+      return (voiceover || normalized).split(/(?<=[.!?])\s+/u).map((sentence) => cleanText(sentence, 400));
+    })
+    .filter((sentence) => sentence.length > 8);
+}
+
 /** Build an editorial image segment with short, time-bound overlays. */
 export function buildResearchAssemblyTimeline(
   timeline,
@@ -31,7 +69,9 @@ export function buildResearchAssemblyTimeline(
       id: idFactory(),
       mediaId: media.id,
       inSec: 0,
-      outSec: Number(media.duration) > 0 ? Number(media.duration) : 5,
+      outSec: Number(media.duration) > 0
+        ? Math.min(Number(media.duration), options.template === "news-short" ? 3 : Number(media.duration))
+        : options.template === "news-short" ? 3 : 5,
       speed: 1,
       zoom: options.template === "news-short" ? 1.06 : 1,
       fit: "cover",
@@ -47,12 +87,14 @@ export function buildResearchAssemblyTimeline(
   if (headline) {
     overlays.push({
       id: idFactory(),
-      text: headline,
+      text: options.template === "news-short"
+        ? wrapOverlayText(headline, { maxChars: 28, maxLines: 2 })
+        : headline,
       startSec,
       endSec: Math.min(endSec, startSec + 5),
       x: 0.5,
-      y: 0.14,
-      size: 42,
+      y: options.template === "news-short" ? 0.12 : 0.14,
+      size: options.template === "news-short" ? 32 : 42,
       color: "#ffffff",
       background: true,
     });
@@ -65,10 +107,10 @@ export function buildResearchAssemblyTimeline(
   if (source) {
     overlays.push({
       id: idFactory(),
-      text: `Nguồn: ${source}`,
+      text: `Source: ${source}`,
       startSec: Math.max(startSec, endSec - 5),
       endSec,
-      x: 0.04,
+      x: 0.5,
       y: 0.92,
       size: 18,
       color: "#ffffff",
@@ -77,11 +119,7 @@ export function buildResearchAssemblyTimeline(
   }
 
   if (options.template === "news-short") {
-    const sentences = cleanText(result?.script || result?.angle, 4000)
-      .split(/(?<=[.!?])\s+|\r?\n/)
-      .map((value) => cleanText(value, 220))
-      .filter((value) => value.length > 8)
-      .slice(0, additions.length);
+    const sentences = narrationSentences(result?.script || result?.angle).slice(0, additions.length);
     let cursor = startSec;
     for (let index = 0; index < additions.length; index += 1) {
       const duration = clipDuration(additions[index]);
@@ -89,12 +127,12 @@ export function buildResearchAssemblyTimeline(
       if (caption) {
         overlays.push({
           id: idFactory(),
-          text: caption,
+          text: wrapOverlayText(caption, { maxChars: 32, maxLines: 2 }),
           startSec: cursor,
           endSec: cursor + duration,
           x: 0.5,
           y: 0.78,
-          size: 29,
+          size: 24,
           color: "#ffffff",
           background: true,
         });

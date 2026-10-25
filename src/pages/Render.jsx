@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FileVideo, Newspaper, Package, Zap } from "lucide-react";
 import { Button } from "../components.jsx";
 import { EditorPage } from "./Editor.jsx";
+import { ProductionPanel } from "./ProductionPanel.jsx";
 
 const modes = [
   { id: "news", label: "Render video tin tức", hint: "Hook, nguồn và headline dọc", icon: Newspaper },
@@ -17,7 +18,8 @@ export function RenderPage(props) {
       <div className="render-mode-tabs">{modes.map(({ id, label, hint, icon: Icon }) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}><span><Icon size={18} /></span><strong>{label}</strong><small>{hint}</small></button>)}</div>
       <div className="render-fast-note"><Zap size={15} /><span><strong>Xuất nhanh</strong> dùng 480p, draft và preset FFmpeg tốc độ cao.</span></div>
     </section>
+    <ProductionPanel key={`production:${props.project.id}:${mode}`} {...props} mode={mode} />
     <div className="render-selected-line"><span><FileVideo size={15} /> {selected.label}</span><Button onClick={() => props.navigate?.("content")}>Mở Content</Button></div>
-    <EditorPage key={`${props.project.id}:${mode}`} {...props} renderKind={mode} />
+    <EditorPage key={`editor:${props.project.id}:${mode}`} {...props} renderKind={mode} />
   </div>;
 }

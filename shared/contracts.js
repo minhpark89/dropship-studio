@@ -25,7 +25,7 @@ export const providers = {
   },
   dreamface: {
     name: "DreamFace",
-    url: "https://www.dreamfaceapp.com/",
+    url: "https://www.dreamfaceapp.com/video",
     hidden: false,
     models: ["DreamFace video"],
     imageModels: [],
@@ -174,6 +174,12 @@ export const generationSchema = z.object({
   ratio: z.enum(["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"]),
   scheduledAt: z.string().datetime().nullable().default(null),
   autoAssemble: z.boolean().default(false),
+  contentContext: z.object({
+    contentType: z.enum(["news", "product"]),
+    researchId: id.nullable().optional(),
+    title: z.string().max(200).default(""),
+    productBrief: z.string().max(4000).default(""),
+  }).optional(),
 });
 
 export const accountSchema = z.object({

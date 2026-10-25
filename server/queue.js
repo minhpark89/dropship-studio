@@ -24,8 +24,10 @@ export class JobQueue {
     this.timer?.unref();
   }
 
-  enqueueGeneration(input) {
+  enqueueGeneration(input, { production = null } = {}) {
     const data = generationSchema.parse(input);
+    production ||= data.contentContext || null;
+    if (production?.researchId && this.store.require("researchResults", production.researchId).projectId !== data.projectId) throw new StudioError("Research must belong to this project.", "RESEARCH_PROJECT_MISMATCH");
     if (
       data.provider === "dola" &&
       data.kind === "video" &&
@@ -86,6 +88,7 @@ export class JobQueue {
       const { prompts, ...payload } = data;
       return this.store.add("jobs", {
         type: "generate",
+        ...(production ? { production } : {}),
         projectId: data.projectId,
         batchId,
         sceneId: randomUUID(),
@@ -106,7 +109,7 @@ export class JobQueue {
     });
   }
 
-  enqueueRender(input) {
+  enqueueRender(input, { production = null } = {}) {
     const project = this.store.require("projects", input.projectId);
     const timeline = validateTimeline(
       this.store,
@@ -114,6 +117,7 @@ export class JobQueue {
     );
     return this.store.add("jobs", {
       type: "render",
+      ...(production ? { production } : {}),
       projectId: project.id,
       name: String(input.name || project.name).slice(0, 120),
       payload: { timeline },
@@ -237,6 +241,7 @@ export class JobQueue {
                 controller.signal,
                 update,
               );
+      if (job.production) this.store.patch("media", media.id, { production: job.production });
       update({
         status: "completed",
         progress: 100,
@@ -433,6 +438,7 @@ export class JobQueue {
       type: job.type,
       projectId: job.projectId,
       name: job.name,
+      ...(job.production ? { production: job.production } : {}),
       payload,
       ...(job.type === "generate" ? {
         batchId: job.batchId || original.batchId,
