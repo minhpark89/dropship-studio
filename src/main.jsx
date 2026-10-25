@@ -29,6 +29,8 @@ import { SocialPage } from "./pages/Social.jsx";
 import { ResearchPage } from "./pages/Research.jsx";
 import "./style.css";
 
+const APP_VERSION = "0.1.2";
+
 const tabs = [
   ["research", "Research & LLM", Search],
   ["create", "Tạo bằng AI", Sparkles],
@@ -160,7 +162,7 @@ function App() {
           </div>
           <p>Dola · Google Flow · DreamFace · FFmpeg</p>
           <small>
-            Dropship Studio <span>v0.1</span>
+            Dropship Studio <span>v{APP_VERSION}</span>
           </small>
         </div>
       </aside>

@@ -4,9 +4,9 @@ Dropship Studio is a Windows desktop app for research, AI video production, time
 
 ## Download for Windows
 
-- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.1/Dropship.Studio.Setup.0.1.1.exe) — install to Windows and create the Desktop shortcut.
-- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.1/Dropship.Studio.0.1.1.exe) — run directly without installation.
-- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.1/SHA256SUMS.txt)
+- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.2/Dropship.Studio.Setup.0.1.2.exe) — install to Windows and create the Desktop shortcut.
+- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.2/Dropship.Studio.0.1.2.exe) — run directly without installation.
+- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.2/SHA256SUMS.txt)
 
 The desktop app starts with a version/loading screen, uses the Dropship Studio icon, and stores user data in `Dropship Data` beside the portable executable or inside the installed application directory.
 
@@ -40,4 +40,4 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Dropship Studio project. The Windows v0.1.1 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.1.1).
+This repository is the dedicated Dropship Studio project. The Windows v0.1.2 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.1.2).

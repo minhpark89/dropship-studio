@@ -189,7 +189,7 @@ try {
   report.checks.push("Closing the desktop leaves the original server running and its saved data intact");
   const launcher = await fs.readFile(path.resolve("../Mo Dropship Studio.cmd"), "utf8");
   assert.ok(launcher.includes('set "STUDIO_DATA_DIR=%~dp0studio\\.studio"'));
-  assert.ok(launcher.includes('release\\Dropship Studio 0.1.1.exe'));
+  assert.ok(launcher.includes('release\\Dropship Studio 0.1.2.exe'));
   report.launcher = { sourceContractChecked: true, executed: false, reason: "Actual launcher targets production data; equivalent STUDIO_DATA_DIR attachment tested on isolated data" };
   report.passed = true;
 } catch (error) {
