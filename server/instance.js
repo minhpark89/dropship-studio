@@ -60,7 +60,7 @@ export function claimInstance(directory) {
         !previous && Date.now() - fs.statSync(file).mtimeMs < 30000;
       if (recentIncomplete || isAlive(previous?.pid)) {
         throw new StudioError(
-          "Dữ liệu này đang được một cửa sổ Dropship Studio sử dụng. Mở cửa sổ đang chạy để tiếp tục.",
+          "Dữ liệu này đang được một cửa sổ Viral Studio sử dụng. Mở cửa sổ đang chạy để tiếp tục.",
           "INSTANCE_RUNNING",
           409,
         );

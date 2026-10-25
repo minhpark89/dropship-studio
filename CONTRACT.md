@@ -1,4 +1,4 @@
-# Dropship Studio module contract
+# Viral Studio module contract
 
 ## Page/post continuation — 2026-10-24 (current work)
 

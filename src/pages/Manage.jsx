@@ -426,12 +426,12 @@ export function SettingsPage({ data, project, run, notify }) {
           <div className="panel-heading">
             <h3>
               <KeyRound size={18} />
-              License Dropship Studio
+              License Viral Studio
             </h3>
             {license && <Badge status={license.status === "active" ? "ready" : license.status} />}
           </div>
           <p className="muted small">
-            License này chỉ xác nhận quyền dùng sản phẩm Dropship Studio. Nó tách biệt với
+            License này chỉ xác nhận quyền dùng sản phẩm Viral Studio. Nó tách biệt với
             tài khoản Google/Dola/Flow và không thay thế cookie hay phiên trình duyệt.
           </p>
           {license?.message && (
@@ -454,7 +454,7 @@ export function SettingsPage({ data, project, run, notify }) {
             if (result) {
               setLicense(result);
               setLicenseToken("");
-              notify("Đã nhập license Dropship Studio.");
+              notify("Đã nhập license Viral Studio.");
             }
           }}>
             <Field label="Token license chính thức">
@@ -747,7 +747,7 @@ export function SettingsPage({ data, project, run, notify }) {
             </h3>
           </div>
           <p>
-            Dropship Studio mở website Dola hoặc Google Flow trong hồ sơ Chrome
+            Viral Studio mở website Dola hoặc Google Flow trong hồ sơ Chrome
             của từng tài khoản. Website tự xử lý phiên đăng nhập và gửi yêu cầu
             tạo nội dung.
           </p>

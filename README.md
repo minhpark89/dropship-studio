@@ -1,20 +1,20 @@
-﻿# Dropship Studio
+﻿# Viral Studio
 
-Dropship Studio is a Windows desktop app for research, AI video production, timeline editing, Facebook Page management, post planning and Meta publishing preparation.
+Viral Studio is a Windows desktop app for research, AI video production, timeline editing, Facebook Page management, post planning and Meta publishing preparation.
 
 ## Download for Windows
 
-- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.2/Dropship.Studio.Setup.0.1.2.exe) — install to Windows and create the Desktop shortcut.
-- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.2/Dropship.Studio.0.1.2.exe) — run directly without installation.
-- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.1.2/SHA256SUMS.txt)
+- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.2.0/Viral.Studio.Setup.0.2.0.exe) — install to Windows and create the Desktop shortcut.
+- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.2.0/Viral.Studio.0.2.0.exe) — run directly without installation.
+- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.2.0/SHA256SUMS.txt)
 
-The desktop app starts with a version/loading screen, uses the Dropship Studio icon, and stores user data in `Dropship Data` beside the portable executable or inside the installed application directory.
+The desktop app starts with a version/loading screen, uses the Viral Studio icon, and stores user data in `Viral Data`; an installed upgrade can read legacy `Dropship Data` automatically.
 
 ## Included features
 
-- Page overview with Page selection, Meta connection/token status and Page management.
-- Post management with create, edit, approve, schedule, preview, duplicate and export actions.
-- OpenAI-compatible LLM endpoint settings, including local Ollama and LM Studio endpoints.
+- Separate Channels, Content, Product and Research workspaces; Page selection, Meta token status and Page management.
+- Content management with News/Product type, first comment, store or article link, approve, schedule and handoff export.
+- DreamFace generation for news and product videos, local rotation slots, OpenAI-compatible research and FFmpeg render QA.
 - Research feed, AI video generation providers, timeline editing and Windows packaging.
 
 ## Run from source
@@ -40,4 +40,4 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Dropship Studio project. The Windows v0.1.2 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.1.2).
+This repository is the dedicated Viral Studio project. The Windows v0.2.0 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.2.0).

@@ -96,7 +96,7 @@ function ResearchForm({ project, onResult, notify }) {
   );
 }
 
-function ResultCard({ result, onImport, importing, onUse, onAssemble, onSearchImages, searchingImages, onImportSearchImages, importingSearchImages }) {
+function ResultCard({ result, onImport, importing, onUse, onDreamFace, dreaming, onAssemble, onSearchImages, searchingImages, onImportSearchImages, importingSearchImages }) {
   return (
     <article className="research-result-card">
       <div className="research-result-header"><div><span className="research-kicker">{result.niche} · {dateLabel(result.createdAt)}</span><h3>{result.headline || result.topic}</h3></div><span className="research-result-state"><CheckCircle2 size={14} /> Đã lưu</span></div>
@@ -108,6 +108,7 @@ function ResultCard({ result, onImport, importing, onUse, onAssemble, onSearchIm
       {result.articles?.some((article) => article.imageUrl) && <div className="research-image-actions"><span>{result.imageMediaIds?.length || 0} ảnh đã nhập vào thư viện</span><Button onClick={() => onImport(result)} busy={importing}><ImageDown size={14} /> Tải ảnh bài viết</Button></div>}
       {result.imageMediaIds?.length > 0 && <div className="research-image-actions"><span>{result.imageMediaIds.length} ảnh sẵn sàng để dựng</span><Button onClick={() => onAssemble(result)}><Film size={14} /> Ráp ảnh + caption</Button></div>}
       {result.script && <div className="research-image-actions"><span>Script đã sẵn sàng cho trình dựng video</span><Button onClick={() => onUse(result)}><Film size={14} /> Dùng script tạo video</Button></div>}
+      {result.script && <div className="research-image-actions research-dreamface-action"><span><Sparkles size={14} /> Tạo video tin tức dọc trực tiếp bằng DreamFace</span><Button variant="primary" onClick={() => onDreamFace(result)} busy={dreaming}><Sparkles size={14} /> DreamFace video</Button></div>}
       {result.warnings?.length > 0 && <div className="research-warning"><CircleHelp size={15} />{result.warnings.join(" · ")}</div>}
     </article>
   );
@@ -183,6 +184,7 @@ export function ResearchPage({ data, project, notify, navigate }) {
   const [importing, setImporting] = useState("");
   const [searchingImages, setSearchingImages] = useState("");
   const [importingSearchImages, setImportingSearchImages] = useState("");
+  const [dreaming, setDreaming] = useState("");
   useEffect(() => setResults(data.researchResults || []), [data.researchResults]);
   const projectResults = useMemo(() => results.filter((result) => result.projectId === project.id).sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0)), [results, project.id]);
   const onResult = (result) => setResults((current) => [result, ...current.filter((item) => item.id !== result.id)]);
@@ -232,6 +234,35 @@ export function ResearchPage({ data, project, notify, navigate }) {
     notify("Đã chuyển script sang màn hình tạo video.");
     navigate?.("create");
   };
+  const createDreamFaceVideo = async (result) => {
+    if (dreaming) return;
+    const dreamface = (data.accounts || []).filter((account) => account.provider === "dreamface");
+    const ready = dreamface.find((account) => account.status === "ready");
+    setDreaming(result.id);
+    try {
+      const prompt = [result.headline || result.topic, result.angle, result.script].filter(Boolean).join("\n\n").slice(0, 20000);
+      const jobs = await api("/jobs/generate", {
+        projectId: project.id,
+        provider: "dreamface",
+        accountId: ready?.id || "auto",
+        kind: "video",
+        mode: "text",
+        model: "DreamFace video",
+        duration: 10,
+        ratio: "9:16",
+        prompts: [prompt],
+        references: [],
+        scheduledAt: null,
+        autoAssemble: false,
+      });
+      notify(`Đã đưa ${jobs.length} video tin tức vào hàng đợi${ready ? "." : ". Hãy đăng nhập một DreamFace slot để chạy."}`);
+      navigate?.("queue");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setDreaming("");
+    }
+  };
   const assembleImages = async (result) => {
     try {
       const fresh = await api("/state");
@@ -252,7 +283,7 @@ export function ResearchPage({ data, project, notify, navigate }) {
       notify(error.message, "error");
     }
   };
-  return <div className="page research-page"><div className="page-heading research-heading"><div><div className="eyebrow">RESEARCH WORKSPACE</div><h1>Từ chủ đề đến góc kể chuyện.</h1><p>Thu thập nguồn, chọn angle và chuẩn bị script trong phạm vi dự án <strong>{project.name}</strong>.</p></div><div className="research-heading-mark"><Newspaper size={20} /><span>{projectResults.length} kết quả</span></div></div><div className="research-tabs research-primary-tabs"><button className={view === "research" ? "active" : ""} onClick={() => setView("research")}><Search size={15} /> Research</button><button className={view === "dreamface" ? "active" : ""} onClick={() => setView("dreamface")}><Sparkles size={15} /> DreamFace</button><button className={view === "llm" ? "active" : ""} onClick={() => setView("llm")}><BrainCircuit size={15} /> LLM settings</button></div>{view === "research" && <><section className="research-card research-run-card"><div className="research-card-heading"><div><span className="research-kicker">EDITORIAL INPUT</span><h2><Search size={19} /> Nghiên cứu chủ đề</h2><p>RSS/Atom được giới hạn và deduplicate trước khi tổng hợp.</p></div><span className="research-step"><span>01</span> INPUT</span></div><ResearchForm project={project} onResult={onResult} notify={notify} /></section><section className="research-results"><div className="research-section-heading"><div><span className="research-kicker">PROJECT RESULTS</span><h2>Kết quả gần đây</h2></div>{projectResults.length > 0 && <span>{projectResults.length} bản ghi</span>}</div>{projectResults.length ? projectResults.map((result) => <ResultCard key={result.id} result={result} onImport={importImages} importing={importing === result.id} onUse={useScript} onAssemble={assembleImages} onSearchImages={searchImages} searchingImages={searchingImages === result.id} onImportSearchImages={importSearchImages} importingSearchImages={importingSearchImages === result.id} />) : <Empty icon={Newspaper} title="Chưa có research nào">Nhập một chủ đề để tạo bản ghi đầu tiên cho dự án này.</Empty>}</section></>}{view === "dreamface" && <DreamFacePanel data={data} notify={notify} />}{view === "llm" && <LlmSettings data={data} notify={notify} />}</div>;
+  return <div className="page research-page"><div className="page-heading research-heading"><div><div className="eyebrow">RESEARCH WORKSPACE</div><h1>Từ chủ đề đến góc kể chuyện.</h1><p>Thu thập nguồn, chọn angle và chuẩn bị script trong phạm vi dự án <strong>{project.name}</strong>.</p></div><div className="research-heading-mark"><Newspaper size={20} /><span>{projectResults.length} kết quả</span></div></div><div className="research-tabs research-primary-tabs"><button className={view === "research" ? "active" : ""} onClick={() => setView("research")}><Search size={15} /> Research</button><button className={view === "dreamface" ? "active" : ""} onClick={() => setView("dreamface")}><Sparkles size={15} /> DreamFace</button><button className={view === "llm" ? "active" : ""} onClick={() => setView("llm")}><BrainCircuit size={15} /> LLM settings</button></div>{view === "research" && <><section className="research-card research-run-card"><div className="research-card-heading"><div><span className="research-kicker">EDITORIAL INPUT</span><h2><Search size={19} /> Nghiên cứu chủ đề</h2><p>RSS/Atom được giới hạn và deduplicate trước khi tổng hợp.</p></div><span className="research-step"><span>01</span> INPUT</span></div><ResearchForm project={project} onResult={onResult} notify={notify} /></section><section className="research-results"><div className="research-section-heading"><div><span className="research-kicker">PROJECT RESULTS</span><h2>Kết quả gần đây</h2></div>{projectResults.length > 0 && <span>{projectResults.length} bản ghi</span>}</div>{projectResults.length ? projectResults.map((result) => <ResultCard key={result.id} result={result} onImport={importImages} importing={importing === result.id} onUse={useScript} onDreamFace={createDreamFaceVideo} dreaming={dreaming === result.id} onAssemble={assembleImages} onSearchImages={searchImages} searchingImages={searchingImages === result.id} onImportSearchImages={importSearchImages} importingSearchImages={importingSearchImages === result.id} />) : <Empty icon={Newspaper} title="Chưa có research nào">Nhập một chủ đề để tạo bản ghi đầu tiên cho dự án này.</Empty>}</section></>}{view === "dreamface" && <DreamFacePanel data={data} notify={notify} />}{view === "llm" && <LlmSettings data={data} notify={notify} />}</div>;
 }
 
 export const Research = ResearchPage;

@@ -2,6 +2,15 @@ import { z } from "zod";
 
 const uuid = z.string().uuid();
 const text = (max) => z.string().trim().max(max);
+const webLink = z.string().trim().max(2000).refine((value) => {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}, "Liên kết phải là URL http hoặc https hợp lệ.");
 export const socialStatusLabels = {
   draft: "Bản nháp",
   ready: "Đã duyệt",
@@ -49,8 +58,13 @@ export const socialPostSchema = z.object({
   pageId: uuid,
   pageGroupId: z.string().trim().max(120).default(""),
   tokenGroupId: z.string().trim().max(120).default(""),
+  contentType: z.enum(["product", "news"]).default("product"),
   title: text(200).min(1),
   caption: text(20000).default(""),
+  firstComment: text(10000).default(""),
+  linkUrl: webLink.default(""),
+  linkLabel: text(160).default(""),
+  sourceUrl: webLink.default(""),
   mediaIds: z.array(uuid).max(1).default([]),
   scheduledAt: z.string().datetime({ offset: true }).nullable().default(null),
   status: z.enum(["draft", "ready", "scheduled"]).default("draft"),

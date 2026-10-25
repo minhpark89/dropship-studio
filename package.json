@@ -1,10 +1,10 @@
 {
-  "name": "dropship-studio",
-  "version": "0.1.2",
+  "name": "viral-studio",
+  "version": "0.2.0",
   "private": true,
   "license": "UNLICENSED",
-  "author": "Dropship Studio",
-  "description": "Tạo video AI với Dola, Google Flow và dựng video cục bộ",
+  "author": "Viral Studio",
+  "description": "Research news, product video and social content workspace with DreamFace",
   "type": "module",
   "main": "desktop/main.cjs",
   "scripts": {
@@ -17,7 +17,9 @@
     "pack:installer": "npm run build && electron-builder --win nsis --publish never",
     "pack:release": "npm run build && electron-builder --win nsis portable --publish never",
     "test": "node --test tests/*.test.js",
-    "test:ui": "node tests/browser.mjs"
+    "test:ui": "node tests/browser.mjs",
+    "test:workspaces": "node tests/workspaces-browser.mjs",
+    "test:sample-render": "node tests/sample-render.mjs"
   },
   "dependencies": {
     "express": "5.3.0",
@@ -35,8 +37,8 @@
     "vite": "8.3.5"
   },
   "build": {
-    "appId": "local.dropship.studio",
-    "productName": "Dropship Studio",
+    "appId": "local.viral.studio",
+    "productName": "Viral Studio",
     "directories": {
       "output": "release"
     },
@@ -75,11 +77,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Dropship Studio",
-      "artifactName": "Dropship Studio Setup ${version}.${ext}"
+      "shortcutName": "Viral Studio",
+      "artifactName": "Viral Studio Setup ${version}.${ext}"
     },
     "portable": {
-      "artifactName": "Dropship Studio ${version}.${ext}"
+      "artifactName": "Viral Studio ${version}.${ext}"
     }
   }
 }

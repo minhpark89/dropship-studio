@@ -29,6 +29,8 @@ export function AccountsPage({ data, run, notify }) {
   const [sourceAccountId, setSourceAccountId] = useState("");
   const [busy, setBusy] = useState("");
   const [filter, setFilter] = useState("all");
+  const [slotCount, setSlotCount] = useState(5);
+  const [slotPrefix, setSlotPrefix] = useState("DreamFace slot");
   const accounts = data.accounts.filter(
     (account) => filter === "all" || account.provider === filter,
   );
@@ -65,6 +67,20 @@ export function AccountsPage({ data, run, notify }) {
     }
     setBusy("");
   };
+  const createSlots = async (event) => {
+    event.preventDefault();
+    setBusy("bulk-slots");
+    const result = await run(() => api("/accounts/bulk-slots", {
+      provider: "dreamface",
+      count: Number(slotCount),
+      namePrefix: slotPrefix,
+    }));
+    setBusy("");
+    if (result) {
+      notify(`Đã tạo ${result.created} DreamFace slot local. Nhập email của bạn ở từng slot để hoàn tất xác minh.`);
+      close();
+    }
+  };
   return (
     <div className="page">
       <div className="page-heading">
@@ -73,7 +89,7 @@ export function AccountsPage({ data, run, notify }) {
           <h1>Tài khoản của bạn.</h1>
           <p>Kết nối Dola và Google Flow bằng phiên đăng nhập trên máy này.</p>
         </div>
-        <Button
+        <div className="account-heading-actions"><Button onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace slot"); setModal({ type: "bulk-slots" }); }}><Plus size={16} /> Tạo slot xoay vòng</Button><Button
           variant="primary"
           onClick={() => {
             setForm({
@@ -88,7 +104,7 @@ export function AccountsPage({ data, run, notify }) {
         >
           <Plus size={17} />
           Thêm tài khoản
-        </Button>
+        </Button></div>
       </div>
       <div className="account-explainer">
         <span className="explainer-icon">
@@ -407,6 +423,23 @@ export function AccountsPage({ data, run, notify }) {
                   : "Thêm & đăng nhập"}
               </Button>
             </div>
+          </form>
+        </Modal>
+      )}
+      {modal?.type === "bulk-slots" && (
+        <Modal title="Tạo slot DreamFace xoay vòng" onClose={close}>
+          <form onSubmit={createSlots}>
+            <Notice>
+              Slot là profile local để dùng luân phiên trong các ngày sau. Studio không tự tạo email bên ngoài, không đăng ký tài khoản thay bạn và không vượt CAPTCHA/MFA; mỗi slot vẫn cần email, mật khẩu hoặc cookie do bạn sở hữu.
+            </Notice>
+            <div className="form-grid">
+              <Field label="Số lượng slot"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
+              <Field label="Tiền tố tên"><input maxLength="80" value={slotPrefix} onChange={(event) => setSlotPrefix(event.target.value)} /></Field>
+            </div>
+            <Field label="Cách dùng" hint="Sau khi tạo, lọc DreamFace trong danh sách account rồi đăng nhập từng slot khi cần. Hàng đợi tự chọn profile ready khi để Auto.">
+              <input value="Auto rotation · account ready" readOnly />
+            </Field>
+            <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" busy={busy === "bulk-slots"}><Plus size={15} /> Tạo {slotCount} slot</Button></div>
           </form>
         </Modal>
       )}

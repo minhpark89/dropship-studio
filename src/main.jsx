@@ -10,6 +10,7 @@ import {
   Settings2,
   Newspaper,
   Search,
+  ShoppingBag,
   Plus,
   ChevronDown,
   ArrowUpRight,
@@ -27,12 +28,19 @@ import { EditorPage } from "./pages/Editor.jsx";
 import { QueuePage, SettingsPage } from "./pages/Manage.jsx";
 import { SocialPage } from "./pages/Social.jsx";
 import { ResearchPage } from "./pages/Research.jsx";
+import { PagesPage } from "./pages/Pages.jsx";
+import { ContentPage } from "./pages/Content.jsx";
+import { ProductPage } from "./pages/Product.jsx";
 import "./style.css";
+import "./pages/workspace.css";
 
-const APP_VERSION = "0.1.2";
+const APP_VERSION = "0.2.0";
 
 const tabs = [
-  ["research", "Research & LLM", Search],
+  ["research", "Research & News", Search],
+  ["product", "Product Studio", ShoppingBag],
+  ["content", "Content Studio", Newspaper],
+  ["pages", "Channels & Tokens", Users],
   ["create", "Tạo bằng AI", Sparkles],
   ["storyboard", "Kịch bản", Clapperboard],
   ["accounts", "Tài khoản", Users],
@@ -44,6 +52,9 @@ const tabs = [
 ];
 const pages = {
   research: ResearchPage,
+  product: ProductPage,
+  content: ContentPage,
+  pages: PagesPage,
   create: CreatePage,
   storyboard: StoryboardPage,
   accounts: AccountsPage,
@@ -137,7 +148,7 @@ function App() {
         >
           <span className="brand-mark"><img src="/icon.png" alt="" /></span>
           <div>
-            Dropship<span>STUDIO</span>
+            Viral<span>STUDIO</span>
           </div>
         </a>
         <div className="sidebar-label">KHÔNG GIAN SÁNG TẠO</div>
@@ -162,7 +173,7 @@ function App() {
           </div>
           <p>Dola · Google Flow · DreamFace · FFmpeg</p>
           <small>
-            Dropship Studio <span>v{APP_VERSION}</span>
+            Viral Studio <span>v{APP_VERSION}</span>
           </small>
         </div>
       </aside>
@@ -211,7 +222,7 @@ function App() {
               onClick={() => navigate("accounts")}
               aria-label="Quản lý tài khoản"
             >
-              DS
+              VS
             </button>
           </div>
         </header>

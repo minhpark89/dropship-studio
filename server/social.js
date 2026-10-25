@@ -137,7 +137,7 @@ export function mountSocialRoutes(app, store) {
     assertRevision(post, input.revision);
     if (post.status === "published") throw new StudioError("Bài đã ghi nhận đăng và không thể sửa.", "IMMUTABLE_PUBLISHED", 409);
     const { revision, ...changes } = input;
-    const contentChanged = ["caption", "mediaIds", "pageId", "title"].some((key) => changes[key] !== undefined && JSON.stringify(changes[key]) !== JSON.stringify(post[key]));
+  const contentChanged = ["caption", "firstComment", "linkUrl", "linkLabel", "sourceUrl", "contentType", "mediaIds", "pageId", "title"].some((key) => changes[key] !== undefined && JSON.stringify(changes[key]) !== JSON.stringify(post[key]));
     const explicitlyReapproved = contentChanged && (changes.status === "ready" || changes.status === "scheduled");
     if (contentChanged && !explicitlyReapproved) {
       changes.status = "draft";
@@ -169,8 +169,13 @@ export function mountSocialRoutes(app, store) {
       pageId: source.pageId,
       pageGroupId: source.pageGroupId || "",
       tokenGroupId: source.tokenGroupId || "",
+      contentType: source.contentType || "product",
       title: `${source.title} (copy)`.slice(0, 200),
       caption: source.caption,
+      firstComment: source.firstComment || "",
+      linkUrl: source.linkUrl || "",
+      linkLabel: source.linkLabel || "",
+      sourceUrl: source.sourceUrl || "",
       mediaIds: [...source.mediaIds],
       scheduledAt: null,
       status: "draft",

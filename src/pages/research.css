@@ -103,3 +103,13 @@
   .research-image-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .research-image-tile img { height: 82px; }
 }
+.research-dreamface-action {
+  border-left: 2px solid #ff9c5c;
+  padding-left: 10px;
+}
+.research-dreamface-action > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #f4b87f;
+}

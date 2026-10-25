@@ -52,7 +52,7 @@ function publicClaims(payload) {
 function validateClaims(payload, now = Date.now()) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Payload license không hợp lệ.");
   const claims = publicClaims(payload);
-  if (!claims.product) throw new Error("License không thuộc Dropship Studio.");
+  if (!claims.product) throw new Error("License không thuộc Viral Studio.");
   if (!claims.licenseId) throw new Error("License thiếu mã license.");
   if (claims.expiresAt === null) throw new Error("License thiếu hạn sử dụng.");
   if (claims.issuedAt !== null && claims.issuedAt > now + 5 * 60 * 1000) throw new Error("License có thời điểm cấp không hợp lệ.");
@@ -79,7 +79,7 @@ export function verifyLicenseToken(token, options = {}) {
   const parsed = parseLicenseToken(token);
   const publicKey = resolvePublicKey(options);
   if (!publicKey) {
-    const error = new Error("Chưa cấu hình public key của Dropship Studio.");
+    const error = new Error("Chưa cấu hình public key của Viral Studio.");
     error.code = "LICENSE_PUBLIC_KEY_MISSING";
     throw error;
   }
@@ -109,7 +109,7 @@ export function licenseStatus(root, options = {}) {
     return {
       status: "not_activated",
       configured: publicKeyConfigured,
-      message: publicKeyConfigured ? "Chưa nhập license Dropship Studio." : "Chưa cấu hình public key của Dropship Studio.",
+      message: publicKeyConfigured ? "Chưa nhập license Viral Studio." : "Chưa cấu hình public key của Viral Studio.",
       features: {},
     };
   }

@@ -131,7 +131,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       tools: await checkTools(store.state.settings),
       browser,
       dataDir: store.root,
-      version: "0.1.2",
+      version: "0.2.0",
     });
   });
 
@@ -312,6 +312,25 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       }),
     );
   });
+  app.post("/api/accounts/bulk-slots", (req, res) => {
+    const input = z.object({
+      provider: z.literal("dreamface").default("dreamface"),
+      count: z.number().int().min(1).max(100),
+      namePrefix: z.string().trim().min(1).max(80).default("DreamFace slot"),
+    }).parse(req.body || {});
+    const accounts = Array.from({ length: input.count }, (_, index) => store.add("accounts", {
+      name: `${input.namePrefix} ${String(index + 1).padStart(2, "0")}`,
+      provider: input.provider,
+      loginMethod: "credentials",
+      email: "",
+      proxy: "",
+      status: "needs_login",
+      message: "Slot đã tạo. Nhập email của bạn và hoàn tất đăng nhập/xác minh DreamFace trước khi dùng.",
+      rotationIndex: index + 1,
+      rotationEnabled: true,
+    }));
+    res.status(201).json({ accounts, created: accounts.length });
+  });
   app.post("/api/accounts/:id/check", async (req, res) =>
     res.json(await checkAccount(req.params.id)),
   );
@@ -470,7 +489,7 @@ if (
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const studio = await startServer();
-  console.log(`Dropship Studio: ${studio.address}`);
+  console.log(`Viral Studio: ${studio.address}`);
   let stopping = false;
   const close = async () => {
     if (stopping) return;

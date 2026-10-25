@@ -1,6 +1,6 @@
 # Research, LLM and DreamFace continuation contract
 
-This extension adds a local editorial research workspace to Dropship Studio.
+This extension adds a local editorial research workspace to Viral Studio.
 
 - LLM configuration is stored only in the local Store. API keys never enter the public state snapshot, event stream, logs, export packages, or browser renderer state.
 - Research fetches a bounded set of configured RSS/Atom feeds, deduplicates articles, and asks an OpenAI-compatible JSON endpoint to select an angle, write a short script, and suggest image queries. If the endpoint is unavailable, the result remains usable with feed summaries and a visible warning.

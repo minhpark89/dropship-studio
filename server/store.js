@@ -91,6 +91,14 @@ export class Store extends EventEmitter {
         throw new Error("Dữ liệu Page/bài đăng không hợp lệ; hãy khôi phục bản sao lưu.");
       }
     }
+    this.state.socialPosts = this.state.socialPosts.map((post) => ({
+      contentType: "product",
+      firstComment: "",
+      linkUrl: "",
+      linkLabel: "",
+      sourceUrl: "",
+      ...post,
+    }));
     if (!this.state.settings || typeof this.state.settings !== "object") {
       this.state.settings = {};
       recovered = true;

@@ -2566,6 +2566,12 @@ nav button.active {
 .page-heading p {
   max-width: 700px;
 }
+.account-heading-actions {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .eyebrow {
   color: #b8d995;
   letter-spacing: 2.2px;

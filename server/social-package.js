@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { StudioError } from "./store.js";
 
-const packageNames = new Set(["post.json", "caption.txt", "manifest.json"]);
+const packageNames = new Set(["post.json", "caption.txt", "first-comment.txt", "manifest.json"]);
 const mediaName = /^media\.(?:jpg|jpeg|png|gif|webp|mp4|mov|webm|m4v|mkv|avi)$/i;
 const locks = new Set();
 
@@ -54,8 +54,13 @@ export async function createPostPackage(store, post) {
       revision,
       projectId: post.projectId,
       pageId: post.pageId,
+      contentType: post.contentType || "product",
       title: post.title,
       caption: post.caption,
+      firstComment: post.firstComment || "",
+      linkUrl: post.linkUrl || "",
+      linkLabel: post.linkLabel || "",
+      sourceUrl: post.sourceUrl || "",
       notes: post.notes,
       scheduledAt: post.scheduledAt,
       status: post.status,
@@ -64,11 +69,14 @@ export async function createPostPackage(store, post) {
     };
     const postBytes = Buffer.from(`${JSON.stringify(postData, null, 2)}\n`, "utf8");
     const captionBytes = Buffer.from(`${post.caption || ""}\n`, "utf8");
+    const firstCommentBytes = Buffer.from(`${post.firstComment || ""}\n`, "utf8");
     await fsp.writeFile(path.join(temporary, "post.json"), postBytes, { mode: 0o600 });
     await fsp.writeFile(path.join(temporary, "caption.txt"), captionBytes, { mode: 0o600 });
+    await fsp.writeFile(path.join(temporary, "first-comment.txt"), firstCommentBytes, { mode: 0o600 });
     const files = [
       { name: "post.json", size: postBytes.length, sha256: createHash("sha256").update(postBytes).digest("hex") },
       { name: "caption.txt", size: captionBytes.length, sha256: createHash("sha256").update(captionBytes).digest("hex") },
+      { name: "first-comment.txt", size: firstCommentBytes.length, sha256: createHash("sha256").update(firstCommentBytes).digest("hex") },
     ];
     if (media) {
       const extension = path.extname(media.file).toLowerCase() || ".bin";
