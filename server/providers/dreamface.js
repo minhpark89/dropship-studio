@@ -571,6 +571,10 @@ export class DreamFaceProvider {
     const generate = page.getByRole("button", { name: "Generate", exact: true }).first();
     if (!await generate.isVisible().catch(() => false)) throw providerError("DreamFace Avatar Generate is unavailable.", "PROVIDER_NOT_READY");
     await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => button.innerText.trim() === "Generate" && !button.disabled), null, { timeout: 30000 }).catch(() => {
+      const body = document.body?.innerText || "";
+      if (/\b0\s+Free\b|not enough credits|insufficient credits|daily free.*limit/i.test(body)) {
+        throw providerError("DreamFace has no free generation credit left on this profile today.", "PROVIDER_QUOTA");
+      }
       throw providerError("DreamFace Avatar is still loading its presenter. Try the profile again in a moment.", "PROVIDER_NOT_READY");
     });
     update({ status: "submitting", submittedAt: new Date().toISOString(), workflow: "avatar-news", progress: 5 });
