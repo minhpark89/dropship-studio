@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 const execute = promisify(execFile);
 const output = path.resolve(".verification/portable-launcher");
 const runRoot = path.join(output, `run-${randomUUID()}`);
-const sourceExe = path.resolve("release/Dropship Studio 0.1.0.exe");
+const sourceExe = path.resolve("release/Dropship Studio 0.1.1.exe");
 const sourceLauncher = path.resolve("../Mo Dropship Studio.cmd");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const report = { passed: false, at: new Date().toISOString(), runRoot, cases: [], errors: [] };
@@ -58,8 +58,8 @@ async function liveOwner(directory) {
 async function runCase(mode) {
   const root = path.join(runRoot, mode);
   const exe = mode === "launcher"
-    ? path.join(root, "studio/release/Dropship Studio 0.1.0.exe")
-    : path.join(root, "Dropship Studio 0.1.0.exe");
+    ? path.join(root, "studio/release/Dropship Studio 0.1.1.exe")
+    : path.join(root, "Dropship Studio 0.1.1.exe");
   const data = mode === "launcher" ? path.join(root, "studio/.studio") : path.join(root, "Dropship Data");
   const temporary = path.join(root, "temporary");
   const appData = path.join(root, "appdata");

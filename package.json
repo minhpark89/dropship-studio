@@ -1,6 +1,6 @@
 {
   "name": "dropship-studio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "UNLICENSED",
   "author": "Dropship Studio",
@@ -37,12 +37,35 @@
   "build": {
     "appId": "local.dropship.studio",
     "productName": "Dropship Studio",
-    "directories": { "output": "release" },
-    "files": ["desktop/**", "server/**", "shared/**", "dist/**", "build/**", "package.json"],
-    "extraResources": [{ "from": "bin", "to": "bin", "filter": ["*.exe", "*.txt"] }],
-    "asarUnpack": ["node_modules/playwright*/**"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**",
+      "server/**",
+      "shared/**",
+      "dist/**",
+      "build/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "*.exe",
+          "*.txt"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/playwright*/**"
+    ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "build/icon.ico",
       "signExecutable": false
     },
