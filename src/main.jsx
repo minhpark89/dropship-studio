@@ -133,9 +133,7 @@ function App() {
             navigate("create");
           }}
         >
-          <span className="brand-mark">
-            <span />
-          </span>
+          <span className="brand-mark"><img src="/icon.png" alt="" /></span>
           <div>
             Dropship<span>STUDIO</span>
           </div>
@@ -233,9 +231,7 @@ function App() {
             />
           ) : (
             <div className="loading-screen">
-              <span className="brand-mark">
-                <span />
-              </span>
+              <span className="brand-mark"><img src="/icon.png" alt="" /></span>
               <p>Đang mở không gian làm việc…</p>
             </div>
           )}

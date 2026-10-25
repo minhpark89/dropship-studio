@@ -47,6 +47,8 @@ export const socialPagePatchSchema = socialPageSchema.partial().extend({
 export const socialPostSchema = z.object({
   projectId: uuid,
   pageId: uuid,
+  pageGroupId: z.string().trim().max(120).default(""),
+  tokenGroupId: z.string().trim().max(120).default(""),
   title: text(200).min(1),
   caption: text(20000).default(""),
   mediaIds: z.array(uuid).max(1).default([]),

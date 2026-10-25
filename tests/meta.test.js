@@ -76,6 +76,56 @@ test("Meta routes connect, redact tokens, and bind a Page", async () => {
   }
 });
 
+test("Meta vault keeps multiple token bindings and independent groups redacted", async () => {
+  const { default: express } = await import("express");
+  const { Store } = await import("../server/store.js");
+  const { mountMetaRoutes } = await import("../server/meta.js");
+  const { default: fs } = await import("node:fs/promises");
+  const { default: path } = await import("node:path");
+  const { randomUUID } = await import("node:crypto");
+  const root = path.resolve(".verification", `meta-vault-${randomUUID()}`);
+  await fs.mkdir(root, { recursive: true });
+  const store = new Store(root);
+  const app = express();
+  app.use(express.json());
+  mountMetaRoutes(app, store, { client: {
+    me: async (token) => ({ id: token.includes("two") ? "2" : "1", name: token.includes("two") ? "Owner Two" : "Owner One" }),
+    pages: async (token) => ({ data: [{ id: "321", name: "Shared Page", tasks: ["CREATE_CONTENT"], access_token: `page-${token}` }] }),
+  } });
+  app.use((error, req, res, next) => res.status(error.status || 400).json({ code: error.code || "INVALID_REQUEST", error: error.message }));
+  const server = await new Promise((resolve) => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (url, body) => fetch(`${base}${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    const first = await post("/api/tokens", { accessToken: "owner-one-token-123456", name: "Team One" });
+    assert.equal(first.status, 201);
+    const firstBody = await first.json();
+    assert.equal(JSON.stringify(firstBody).includes("owner-one-token-123456"), false);
+    const second = await post("/api/tokens", { accessToken: "owner-two-token-123456", name: "Team Two" });
+    assert.equal(second.status, 201);
+    const secondBody = await second.json();
+    const group = await post("/api/token-groups", { name: "Team pool", tokenIds: [firstBody.token.id, secondBody.token.id], strategy: "least_recently_used" });
+    assert.equal(group.status, 200);
+    const pageGroup = await post("/api/groups", { name: "Shared content", pageIds: ["321"] });
+    assert.equal(pageGroup.status, 200);
+    const publicState = await (await fetch(`${base}/api/meta`)).json();
+    assert.equal(publicState.tokens.length, 2);
+    assert.equal(publicState.tokenGroups[0].tokenIds.length, 2);
+    assert.equal(publicState.pageGroups[0].pageIds[0], "321");
+    assert.equal(JSON.stringify(publicState).includes("owner-one-token-123456"), false);
+    assert.equal(JSON.stringify(publicState).includes("page-owner-one-token-123456"), false);
+    assert.equal(JSON.stringify(store.publicSnapshot()).includes("page-owner-two-token-123456"), false);
+    const disconnect = await fetch(`${base}/api/meta`, { method: "DELETE" });
+    assert.equal(disconnect.status, 200);
+    const disconnected = await disconnect.json();
+    assert.equal(disconnected.connected, false);
+    assert.equal(disconnected.tokens.length, 2);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Meta Reel publish is explicit and idempotent after preflight", async () => {
   const { default: express } = await import("express");
   const { Store } = await import("../server/store.js");

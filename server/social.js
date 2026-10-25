@@ -167,6 +167,8 @@ export function mountSocialRoutes(app, store) {
     const duplicate = store.add("socialPosts", {
       projectId: source.projectId,
       pageId: source.pageId,
+      pageGroupId: source.pageGroupId || "",
+      tokenGroupId: source.tokenGroupId || "",
       title: `${source.title} (copy)`.slice(0, 200),
       caption: source.caption,
       mediaIds: [...source.mediaIds],

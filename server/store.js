@@ -4,6 +4,12 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { activeStatuses, defaultTimeline } from "../shared/contracts.js";
 
+function maskSecret(value) {
+  const secret = String(value || "");
+  if (!secret) return "";
+  return secret.length > 12 ? `${secret.slice(0, 6)}…${secret.slice(-4)}` : "***";
+}
+
 export class StudioError extends Error {
   constructor(message, code = "INVALID_REQUEST", status = 400) {
     super(message);
@@ -56,12 +62,16 @@ export class Store extends EventEmitter {
           enabled: false,
           graphVersion: "v24.0",
           accessToken: "",
+          activeTokenId: "",
           user: null,
           pages: [],
           boundPageId: "",
           boundPageName: "",
           boundPageToken: "",
           publications: [],
+          tokens: [],
+          tokenGroups: [],
+          pageGroups: [],
         },
       },
     };
@@ -105,12 +115,16 @@ export class Store extends EventEmitter {
         enabled: false,
         graphVersion: "v24.0",
         accessToken: "",
+        activeTokenId: "",
         user: null,
         pages: [],
         boundPageId: "",
         boundPageName: "",
         boundPageToken: "",
         publications: [],
+        tokens: [],
+        tokenGroups: [],
+        pageGroups: [],
       },
     };
     for (const [key, value] of Object.entries(defaults)) {
@@ -128,6 +142,9 @@ export class Store extends EventEmitter {
       ...(this.state.settings.meta || {}),
       pages: Array.isArray(this.state.settings.meta?.pages) ? this.state.settings.meta.pages : [],
       publications: Array.isArray(this.state.settings.meta?.publications) ? this.state.settings.meta.publications : [],
+      tokens: Array.isArray(this.state.settings.meta?.tokens) ? this.state.settings.meta.tokens : [],
+      tokenGroups: Array.isArray(this.state.settings.meta?.tokenGroups) ? this.state.settings.meta.tokenGroups : [],
+      pageGroups: Array.isArray(this.state.settings.meta?.pageGroups) ? this.state.settings.meta.pageGroups : [],
     };
     for (const job of this.state.jobs) {
       if (activeStatuses.includes(job.status)) {
@@ -212,9 +229,18 @@ export class Store extends EventEmitter {
         ...snapshot.settings.meta,
         accessToken: snapshot.settings.meta.accessToken ? "[đã lưu]" : "",
         boundPageToken: snapshot.settings.meta.boundPageToken ? "[đã lưu]" : "",
-        pages: (snapshot.settings.meta.pages || []).map(({ accessToken, ...page }) => ({
+        pages: (snapshot.settings.meta.pages || []).map(({ accessToken, tokenBindings, ...page }) => ({
           ...page,
           hasToken: Boolean(accessToken),
+          tokenBindings: Object.fromEntries(Object.entries(tokenBindings || {}).map(([id, binding]) => {
+            const { pageToken, ...publicBinding } = binding || {};
+            return [id, { ...publicBinding, hasToken: Boolean(pageToken) }];
+          })),
+        })),
+        tokens: (snapshot.settings.meta.tokens || []).map(({ token, ...entry }) => ({
+          ...entry,
+          tokenMasked: token ? maskSecret(token) : "",
+          hasToken: Boolean(token),
         })),
       };
     }

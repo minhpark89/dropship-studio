@@ -18,6 +18,11 @@ import {
   Trash2,
   UserRound,
   X,
+  KeyRound,
+  Layers3,
+  RefreshCw,
+  ShieldCheck,
+  FolderPlus,
 } from "lucide-react";
 import { api } from "../api.js";
 import { Badge, Button, Empty, Field, Modal, Notice } from "../components.jsx";
@@ -33,6 +38,8 @@ const statusLabels = {
 const emptyPost = (projectId, pageId, mediaId = "") => ({
   projectId,
   pageId,
+  pageGroupId: "",
+  tokenGroupId: "",
   title: "",
   caption: "",
   mediaIds: mediaId ? [mediaId] : [],
@@ -118,6 +125,9 @@ export function SocialPage({ data, project, run, notify }) {
   const [meta, setMeta] = useState(data.settings?.meta || null);
   const [metaToken, setMetaToken] = useState("");
   const [metaBusy, setMetaBusy] = useState(false);
+  const [tokenForm, setTokenForm] = useState({ name: "", kind: "USER", note: "" });
+  const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
+  const [groupDialog, setGroupDialog] = useState(null);
 
   useEffect(() => {
     setPages(data.socialPages || []);
@@ -220,6 +230,12 @@ export function SocialPage({ data, project, run, notify }) {
     }
   };
 
+  const refreshMeta = async () => {
+    const result = await api("/meta");
+    setMeta(result);
+    return result;
+  };
+
   const connectMeta = async (event) => {
     event.preventDefault();
     const token = metaToken.trim();
@@ -230,6 +246,41 @@ export function SocialPage({ data, project, run, notify }) {
 
   const bindMeta = (event) => metaAction(() => api("/meta/bind", { pageId: event.target.value }, "POST"), "Đã gắn Page Meta.");
   const disconnectMeta = () => metaAction(() => api("/meta", null, "DELETE"), "Đã ngắt kết nối Meta.");
+  const addToken = async (event) => {
+    event.preventDefault();
+    const token = metaToken.trim();
+    if (!token) return;
+    const result = await metaAction(() => api("/meta/tokens", { accessToken: token, ...tokenForm }, "POST"), "Đã thêm token và đồng bộ Page.");
+    if (result) {
+      setMetaToken("");
+      setTokenForm({ name: "", kind: "USER", note: "" });
+      setTokenDialogOpen(false);
+      await refreshMeta();
+    }
+  };
+  const refreshToken = (token) => metaAction(async () => {
+    await api(`/meta/tokens/${token.id}/refresh-pages`, null, "POST");
+    return refreshMeta();
+  }, `Đã kiểm tra lại ${token.name}.`);
+  const removeToken = (token) => metaAction(async () => {
+    await api(`/meta/tokens/${token.id}`, null, "DELETE");
+    return refreshMeta();
+  }, "Đã xóa token khỏi vault.");
+  const saveMetaGroup = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const kind = groupDialog.kind;
+    const name = String(form.get("name") || "").trim();
+    if (!name) return;
+    const body = { name };
+    if (kind === "token") body.tokenIds = form.getAll("tokenIds").map(String);
+    if (kind === "page") body.pageIds = form.getAll("pageIds").map(String);
+    const result = await metaAction(async () => {
+      await api(`/meta/${kind}-groups`, body, "POST");
+      return refreshMeta();
+    }, `Đã tạo nhóm ${kind === "token" ? "token" : "Page"}.`);
+    if (result) setGroupDialog(null);
+  };
   const publishMeta = async (post) => {
     const preflight = await metaAction(() => api("/meta/preflight", { postId: post.id }, "POST"));
     if (!preflight?.ready) return;
@@ -382,6 +433,58 @@ export function SocialPage({ data, project, run, notify }) {
           {meta?.connected && <small>{meta.boundPage ? `Đang gắn: ${meta.boundPage.name}` : "Chưa gắn Page."} · Graph {meta.graphVersion || "v24.0"}</small>}
         </div>
       </section>
+      <section className="meta-management" aria-label="Quản lý token và nhóm Meta">
+        <div className="meta-management-heading">
+          <div>
+            <div className="eyebrow">META WORKSPACE</div>
+            <h2><KeyRound size={17} /> Vault token &amp; nhóm phân phối</h2>
+            <p>Mỗi token được kiểm tra qua <code>/me</code> và <code>/me/accounts</code>. Token chỉ hiển thị dạng rút gọn; Page giữ binding đã xác minh để chọn đúng credential khi đăng.</p>
+          </div>
+          <div className="meta-management-actions">
+            <Button onClick={() => setGroupDialog({ kind: "token" })}><FolderPlus size={14} /> Nhóm token</Button>
+            <Button onClick={() => setGroupDialog({ kind: "page" })}><Layers3 size={14} /> Nhóm Page</Button>
+            <Button variant="primary" onClick={() => setTokenDialogOpen(true)}><Plus size={14} /> Thêm token</Button>
+          </div>
+        </div>
+        <div className="meta-metrics">
+          <div><span>Token trong vault</span><strong>{(meta?.tokens || []).length}</strong><small>Không lộ token gốc</small></div>
+          <div><span>Page đã xác minh</span><strong>{(meta?.pages || []).filter((page) => page.tokenIds?.length).length}</strong><small>Binding từ Meta</small></div>
+          <div><span>Nhóm token</span><strong>{(meta?.tokenGroups || []).length}</strong><small>Chọn pool khi phân phối</small></div>
+          <div><span>Nhóm Page</span><strong>{(meta?.pageGroups || []).length}</strong><small>Gắn content theo kênh</small></div>
+        </div>
+        <div className="meta-management-grid">
+          <div className="meta-management-panel">
+            <div className="social-panel-header"><h3>Token connections</h3><span>{(meta?.tokens || []).length} kết nối</span></div>
+            <div className="meta-token-list">
+              {(meta?.tokens || []).length ? meta.tokens.map((token) => (
+                <div className="meta-token-row" key={token.id}>
+                  <div className="meta-token-icon"><ShieldCheck size={16} /></div>
+                  <div className="meta-token-main"><strong>{token.name}</strong><small>{token.tokenMasked || "***"} · {token.pagesCount || 0} Page · {token.ownerName || token.kind}</small>{token.errorMessage && <small className="meta-token-error">{token.errorMessage}</small>}</div>
+                  <span className={`meta-token-status ${token.status === "ACTIVE" ? "ok" : "warn"}`}>{token.status === "ACTIVE" ? "Đã xác minh" : token.status}</span>
+                  <Button className="icon-button" aria-label={`Kiểm tra ${token.name}`} onClick={() => refreshToken(token)} busy={metaBusy}><RefreshCw size={14} /></Button>
+                  <Button className="icon-button danger-text" aria-label={`Xóa ${token.name}`} onClick={() => removeToken(token)} busy={metaBusy}><Trash2 size={14} /></Button>
+                </div>
+              )) : <p className="meta-empty">Chưa có token. Thêm token Meta do bạn sở hữu để đồng bộ Page và quyền.</p>}
+            </div>
+          </div>
+          <div className="meta-management-panel">
+            <div className="social-panel-header"><h3>Page đã đồng bộ</h3><span>{(meta?.pages || []).length} Page</span></div>
+            <div className="meta-page-mini-list">
+              {(meta?.pages || []).length ? meta.pages.map((page) => (
+                <div className="meta-page-mini" key={page.id}>
+                  {page.avatar ? <img src={page.avatar} alt="" /> : <span className="social-page-icon">f</span>}
+                  <div><strong>{page.name}</strong><small>{page.id} · {page.tasks?.length ? page.tasks.join(", ") : "Chưa đọc quyền"}</small></div>
+                  <span className={`meta-page-binding ${page.tokenIds?.length ? "ok" : "warn"}`}>{page.tokenIds?.length || 0} token</span>
+                </div>
+              )) : <p className="meta-empty">Chưa có Page được token xác minh.</p>}
+            </div>
+          </div>
+        </div>
+        <div className="meta-group-grid">
+          <div className="meta-group-panel"><div className="social-panel-header"><h3>Nhóm token</h3><span>{(meta?.tokenGroups || []).length}</span></div>{(meta?.tokenGroups || []).length ? meta.tokenGroups.map((group) => <div className="meta-group-row" key={group.id}><div><strong>{group.name}</strong><small>{group.tokenIds.length} token · {group.strategy}</small></div><span>{group.pageIds.length} Page</span></div>) : <p className="meta-empty">Tạo nhóm token để phân pool theo team hoặc quota.</p>}</div>
+          <div className="meta-group-panel"><div className="social-panel-header"><h3>Nhóm Page</h3><span>{(meta?.pageGroups || []).length}</span></div>{(meta?.pageGroups || []).length ? meta.pageGroups.map((group) => <div className="meta-group-row" key={group.id}><div><strong>{group.name}</strong><small>{group.pageIds.length} Page · lịch {group.scheduleConfig?.staggerMinutes || 15} phút</small></div><span>{group.folderBinding || "Content local"}</span></div>) : <p className="meta-empty">Tạo nhóm Page để quản lý content theo kênh.</p>}</div>
+        </div>
+      </section>
       <div className="social-layout">
         <aside className="social-panel">
           <div className="social-panel-header"><h2>Facebook Pages</h2><span>{pages.length} Page</span></div>
@@ -418,13 +521,17 @@ export function SocialPage({ data, project, run, notify }) {
 
       {pageDialog && <Modal title={pageDialog.mode === "edit" ? "Sửa Facebook Page" : "Thêm Facebook Page"} onClose={() => setPageDialog(null)}><form onSubmit={savePage}><div className="social-form-grid"><Field label="Tên Page"><input name="name" required maxLength={120} defaultValue={pageDialog.page?.name || ""} autoFocus placeholder="Ví dụ: Vira Home" /></Field><Field label="Page ID (tùy chọn)"><input name="externalId" inputMode="numeric" defaultValue={pageDialog.page?.externalId || ""} placeholder="ID chỉ gồm chữ số" /></Field><Field label="URL Facebook (tùy chọn)" hint="Chỉ dùng liên kết HTTPS facebook.com."><input name="url" type="url" defaultValue={pageDialog.page?.url || ""} placeholder="https://www.facebook.com/..." /></Field><Field label="Múi giờ"><input name="timezone" defaultValue={pageDialog.page?.timezone || "Asia/Bangkok"} placeholder="Asia/Bangkok" /></Field><Field label="Ghi chú" ><textarea name="notes" rows="3" defaultValue={pageDialog.page?.notes || ""} maxLength={5000} /></Field>{pageDialog.mode === "edit" && <label className="check-field"><input name="archived" type="checkbox" defaultChecked={pageDialog.page?.archived} /><span className="checkbox"><Archive size={12} /></span> Lưu trữ Page (ngăn tạo/duyệt/xuất bài mới)</label>}</div><div className="social-dialog-actions"><Button type="button" onClick={() => setPageDialog(null)}>Hủy</Button><Button variant="primary" busy={busyId.startsWith("page:")}>{pageDialog.mode === "edit" ? "Lưu thay đổi" : "Thêm Page"}</Button></div></form></Modal>}
 
-      {postDialog && <Modal wide title={postDialog.mode === "edit" ? "Sửa bài đăng" : "Tạo bài đăng"} onClose={() => setPostDialog(null)}><form onSubmit={savePost}><div className="social-form-grid"><Field label="Tiêu đề"><input name="title" required maxLength={200} defaultValue={postDialog.post?.title || ""} autoFocus placeholder="Tiêu đề nội bộ" /></Field><Field label="Page"><select name="pageId" defaultValue={postDialog.post?.pageId || selectedPageId} disabled={postDialog.post?.status === "published"}>{pages.filter((page) => !page.archived || page.id === postDialog.post?.pageId).map((page) => <option key={page.id} value={page.id}>{page.name}{page.archived ? " (đã lưu trữ)" : ""}</option>)}</select></Field><Field label="Caption" hint="Có thể duyệt bài có caption hoặc media hợp lệ."><textarea name="caption" rows="6" maxLength={20000} defaultValue={postDialog.post?.caption || ""} placeholder="Viết nội dung bài đăng…" /></Field><Field label="Media từ thư viện"><MediaChoice media={projectMedia} selected={postDialog.post?.mediaIds?.[0] || ""} onChange={(value) => { setPostDialog((current) => ({ ...current, post: { ...current.post, mediaIds: value ? [value] : [] } })); }} /></Field><Field label="Trạng thái"><select name="status" defaultValue={postDialog.post?.status || "draft"}><option value="draft">Bản nháp</option><option value="ready">Duyệt nội dung</option><option value="scheduled">Lịch dự kiến</option></select></Field><Field label="Thời gian dự kiến" hint="Nhập theo giờ máy; hệ thống lưu timestamp UTC."><input name="scheduledAt" type="datetime-local" defaultValue={localDateInput(postDialog.post?.scheduledAt)} /></Field><Field label="Ghi chú" ><textarea name="notes" rows="2" maxLength={5000} defaultValue={postDialog.post?.notes || ""} /></Field></div><p className="social-form-hint">Lịch dự kiến chỉ là thông tin biên tập. Xuất gói không đánh dấu bài đã đăng và không gọi mạng xã hội.</p><div className="social-dialog-actions"><Button type="button" onClick={() => setPostDialog(null)}>Hủy</Button><Button variant="primary" busy={busyId.startsWith("post:")}>{postDialog.mode === "edit" ? "Lưu bài" : "Tạo bản nháp"}</Button></div></form></Modal>}
+      {postDialog && <Modal wide title={postDialog.mode === "edit" ? "Sửa bài đăng" : "Tạo bài đăng"} onClose={() => setPostDialog(null)}><form onSubmit={savePost}><div className="social-form-grid"><Field label="Tiêu đề"><input name="title" required maxLength={200} defaultValue={postDialog.post?.title || ""} autoFocus placeholder="Tiêu đề nội bộ" /></Field><Field label="Page"><select name="pageId" defaultValue={postDialog.post?.pageId || selectedPageId} disabled={postDialog.post?.status === "published"}>{pages.filter((page) => !page.archived || page.id === postDialog.post?.pageId).map((page) => <option key={page.id} value={page.id}>{page.name}{page.archived ? " (đã lưu trữ)" : ""}</option>)}</select></Field><Field label="Page group" hint="Preflight checks the selected Meta Page group."><select name="pageGroupId" defaultValue={postDialog.post?.pageGroupId || ""}><option value="">No group</option>{(meta?.pageGroups || []).map((group) => <option key={group.id} value={group.id}>{group.name} - {group.pageIds.length} pages</option>)}</select></Field><Field label="Token pool" hint="Publisher chooses a healthy token from this pool."><select name="tokenGroupId" defaultValue={postDialog.post?.tokenGroupId || ""}><option value="">Auto-select healthy token</option>{(meta?.tokenGroups || []).map((group) => <option key={group.id} value={group.id}>{group.name} - {group.tokenIds.length} tokens</option>)}</select></Field><Field label="Caption" hint="Có thể duyệt bài có caption hoặc media hợp lệ."><textarea name="caption" rows="6" maxLength={20000} defaultValue={postDialog.post?.caption || ""} placeholder="Viết nội dung bài đăng…" /></Field><Field label="Media từ thư viện"><MediaChoice media={projectMedia} selected={postDialog.post?.mediaIds?.[0] || ""} onChange={(value) => { setPostDialog((current) => ({ ...current, post: { ...current.post, mediaIds: value ? [value] : [] } })); }} /></Field><Field label="Trạng thái"><select name="status" defaultValue={postDialog.post?.status || "draft"}><option value="draft">Bản nháp</option><option value="ready">Duyệt nội dung</option><option value="scheduled">Lịch dự kiến</option></select></Field><Field label="Thời gian dự kiến" hint="Nhập theo giờ máy; hệ thống lưu timestamp UTC."><input name="scheduledAt" type="datetime-local" defaultValue={localDateInput(postDialog.post?.scheduledAt)} /></Field><Field label="Ghi chú" ><textarea name="notes" rows="2" maxLength={5000} defaultValue={postDialog.post?.notes || ""} /></Field></div><p className="social-form-hint">Lịch dự kiến chỉ là thông tin biên tập. Xuất gói không đánh dấu bài đã đăng và không gọi mạng xã hội.</p><div className="social-dialog-actions"><Button type="button" onClick={() => setPostDialog(null)}>Hủy</Button><Button variant="primary" busy={busyId.startsWith("post:")}>{postDialog.mode === "edit" ? "Lưu bài" : "Tạo bản nháp"}</Button></div></form></Modal>}
 
       {previewPost && <Modal wide title="Xem trước bài đăng" onClose={() => setPreviewPost(null)}><div className="social-preview">{mediaFor(previewPost, data.media || []) && <PreviewMedia media={mediaFor(previewPost, data.media || [])} className="social-preview-media" />}<div className="social-preview-copy"><strong>{previewPost.title}</strong><p>{previewPost.caption || "(Không có caption)"}</p></div></div><div className="social-dialog-actions"><Button onClick={() => setPreviewPost(null)}>Đóng</Button></div></Modal>}
 
       {exportResult && <Modal title="Gói đăng đã sẵn sàng" onClose={() => setExportResult(null)}><div className="social-export-box"><strong>Handoff package · revision {exportResult.revision}</strong><p>Gói chỉ chứa caption, manifest và media đã chọn. Hãy tải xuống rồi đăng bằng công cụ bên ngoài.</p><div className="social-export-files">{exportResult.files?.map((file) => <a key={file.name} href={file.url} download><Download size={13} /> {file.name}</a>)}</div></div><details><summary>Xem manifest</summary><pre className="code-block">{JSON.stringify(exportResult.manifest, null, 2)}</pre></details><div className="social-dialog-actions"><Button onClick={() => setExportResult(null)}>Đóng</Button><Button variant="primary" onClick={() => { setPublicationPost({ ...exportResult.post, revision: exportResult.revision }); setExportResult(null); }}><Link2 size={14} /> Ghi nhận sau khi đăng</Button></div></Modal>}
 
       {publicationPost && <Modal title="Ghi nhận đăng thủ công" onClose={() => setPublicationPost(null)}><p className="social-manual-label">Chỉ thực hiện sau khi bạn đã đăng bài bằng công cụ bên ngoài. Nhập đúng permalink và ID bài đăng; Studio không xác minh hay gửi nội dung.</p><form onSubmit={recordPublication}><Field label="External post ID"><input name="externalPostId" required pattern="[A-Za-z0-9_-]{1,200}" placeholder="ID từ công cụ đăng" /></Field><Field label="Permalink Facebook"><input name="permalink" type="url" required placeholder="https://www.facebook.com/..." /></Field><Field label="Thời điểm đã đăng"><input name="publishedAt" type="datetime-local" required defaultValue={localDateInput(new Date().toISOString())} /></Field><div className="social-dialog-actions"><Button type="button" onClick={() => setPublicationPost(null)}>Hủy</Button><Button variant="primary" busy={busyId.startsWith("publish:")}><Check size={14} /> Ghi nhận</Button></div></form></Modal>}
+
+      {tokenDialogOpen && <Modal wide title="Thêm token Meta vào vault" onClose={() => setTokenDialogOpen(false)}><form onSubmit={addToken}><p className="social-form-hint">Token được dùng để gọi <code>/me</code> và <code>/me/accounts</code> ngay khi lưu. Chỉ metadata, fingerprint và token mask được trả về giao diện.</p><Field label="Access token"><input type="password" required autoComplete="off" value={metaToken} onChange={(event) => setMetaToken(event.target.value)} placeholder="Dán token Meta do bạn sở hữu" /></Field><div className="social-form-grid"><Field label="Tên kết nối"><input value={tokenForm.name} maxLength={120} placeholder="Ví dụ: Team Content 01" onChange={(event) => setTokenForm((current) => ({ ...current, name: event.target.value }))} /></Field><Field label="Loại"><select value={tokenForm.kind} onChange={(event) => setTokenForm((current) => ({ ...current, kind: event.target.value }))}><option value="USER">User token</option><option value="SYSTEM_USER">System user</option><option value="TEAM">Team token</option></select></Field><Field label="Ghi chú"><textarea rows="3" maxLength={2000} value={tokenForm.note} onChange={(event) => setTokenForm((current) => ({ ...current, note: event.target.value }))} /></Field></div><div className="social-dialog-actions"><Button type="button" onClick={() => setTokenDialogOpen(false)}>Hủy</Button><Button variant="primary" busy={metaBusy}><ShieldCheck size={14} /> Kiểm tra &amp; lưu</Button></div></form></Modal>}
+
+      {groupDialog && <Modal wide title={`Tạo nhóm ${groupDialog.kind === "token" ? "token" : "Page"}`} onClose={() => setGroupDialog(null)}><form onSubmit={saveMetaGroup}><Field label="Tên nhóm"><input name="name" required maxLength={120} autoFocus placeholder={groupDialog.kind === "token" ? "Ví dụ: Team A · quota thấp" : "Ví dụ: Page bán hàng miền Bắc"} /></Field><div className="meta-group-picker"><strong>{groupDialog.kind === "token" ? "Chọn token trong nhóm" : "Chọn Page trong nhóm"}</strong>{(groupDialog.kind === "token" ? (meta?.tokens || []) : (meta?.pages || [])).map((item) => <label key={item.id}><input type="checkbox" name={groupDialog.kind === "token" ? "tokenIds" : "pageIds"} value={item.id} /><span>{item.name || item.id}</span><small>{item.id}</small></label>)}{!(groupDialog.kind === "token" ? meta?.tokens?.length : meta?.pages?.length) && <p className="meta-empty">Chưa có dữ liệu để thêm vào nhóm.</p>}</div><div className="social-dialog-actions"><Button type="button" onClick={() => setGroupDialog(null)}>Hủy</Button><Button variant="primary"><FolderPlus size={14} /> Tạo nhóm</Button></div></form></Modal>}
     </div>
   );
 }
