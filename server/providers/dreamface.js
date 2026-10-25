@@ -548,6 +548,10 @@ export class DreamFaceProvider {
     if (!await effect.isVisible().catch(() => false)) throw providerError("DreamFace Animate Effect is unavailable.", "PROVIDER_NOT_READY");
     await effect.click();
     const fast = page.getByRole("radio", { name: "Avatar 3.0 Fast", exact: true }).last();
+    // The uploaded still is processed asynchronously. Open the effect menu and
+    // wait for DreamFace to enable the Avatar 3.0 family instead of relying on
+    // a short fixed delay, which can race the image-processing request.
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="radio"]')].some((node) => node.innerText.trim() === "Avatar 3.0 Fast" && node.getAttribute("aria-disabled") !== "true"), null, { timeout: 15000 }).catch(() => {});
     if (!await fast.isVisible().catch(() => false) || await fast.getAttribute("aria-disabled") === "true") {
       throw providerError("DreamFace Avatar 3.0 Fast is not available for this MC image.", "PROVIDER_NOT_READY");
     }
