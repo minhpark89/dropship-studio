@@ -71,6 +71,39 @@ test("DreamFace generation is routed through its authenticated provider runner",
   assert.equal(job.mediaId, "dreamface-media");
 });
 
+test("submitted News recovery queues the same job without resubmitting provider work", async (t) => {
+  const store = new Store(path.resolve(".verification", `queue-recovery-${randomUUID()}`));
+  const project = store.createProject("News recovery verification");
+  const account = store.add("accounts", { name: "DreamFace", provider: "dreamface", status: "ready" });
+  const queue = new JobQueue(store, null, {
+    intervalMs: 0,
+    generateDreamFace: async (_store, job, selected) => {
+      assert.equal(job.payload.recoverSubmitted, true);
+      assert.equal(selected.id, account.id);
+      return { id: "recovered-presenter", kind: "video", file: "presenter.mp4", hasAudio: true };
+    },
+    executeNews: undefined,
+  });
+  t.after(() => queue.close());
+  const job = store.add("jobs", {
+    type: "news",
+    projectId: project.id,
+    payload: { provider: "dreamface", accountId: account.id, newsPlan: {}, imageMediaIds: [] },
+    status: "interrupted",
+    progress: 75,
+    submittedAt: new Date().toISOString(),
+    mediaId: null,
+    logs: [],
+  });
+  const recovered = queue.recoverSubmitted(job.id);
+  assert.equal(recovered.id, job.id);
+  assert.equal(recovered.status, "preparing");
+  assert.equal(recovered.payload.recoverSubmitted, true);
+  await until(() => queue.running.size === 0);
+  assert.equal(job.status, "failed");
+  assert.match(job.error, /at least one verified editorial image/i);
+});
+
 test("automatic DreamFace selection rotates by least recently used profile", async (t) => {
   const store = new Store(path.resolve(".verification", `queue-dreamface-rotation-${randomUUID()}`));
   const project = store.createProject("DreamFace rotation verification");
@@ -123,6 +156,29 @@ test("automatic DreamFace selection rotates by least recently used profile", asy
   assert.equal(first.status, "completed");
   assert.equal(second.status, "completed");
   assert.ok(store.require("accounts", older.id).lastUsedAt);
+});
+
+test("automatic DreamFace news work uses two ready profiles concurrently", async (t) => {
+  const store = new Store(path.resolve(".verification", `queue-dreamface-parallel-${randomUUID()}`));
+  const project = store.createProject("DreamFace parallel verification");
+  const accounts = ["News A", "News B"].map((name) => store.add("accounts", { name, provider: "dreamface", status: "ready" }));
+  const calls = [];
+  const pending = [];
+  const queue = new JobQueue(store, null, {
+    intervalMs: 0,
+    generateDreamFace: async (_store, _job, account) => {
+      calls.push(account.id);
+      return new Promise((resolve) => pending.push(resolve));
+    },
+  });
+  t.after(async () => { await queue.close(); await fs.rm(store.root, { recursive: true, force: true }); });
+  queue.enqueueGeneration({ projectId: project.id, provider: "dreamface", accountId: "auto", model: "DreamFace video", duration: 5, ratio: "9:16", prompts: ["First news presenter", "Second news presenter"] });
+  queue.tick();
+  await until(() => calls.length === 2);
+  assert.equal(new Set(calls).size, 2);
+  pending.forEach((resolve, index) => resolve({ id: `parallel-media-${index}` }));
+  await until(() => queue.running.size === 0);
+  assert.ok(accounts.every((account) => store.require("accounts", account.id).status === "ready"));
 });
 
 test("pause, persisted schedules, concurrency and per-account serialization", async (t) => {

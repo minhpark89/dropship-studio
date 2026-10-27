@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { StudioError } from "./store.js";
+import { importMedia } from "./media.js";
+import { generateImageEndpoint, resolveMcImageConfig } from "./mc-image.js";
+import { requestJsonContent } from "./llm.js";
+import { normalizeScheduleConfig } from "./social.js";
 
 const GRAPH_VERSION = "v26.0";
 const accessTokenSchema = z.string().trim().min(10).max(5000);
@@ -9,6 +14,15 @@ const pageIdSchema = z.string().regex(/^\d{1,40}$/);
 const tokenKindSchema = z.enum(["USER", "SYSTEM_USER", "VIA_TOKEN"]);
 const appIdSchema = z.string().trim().min(1).max(200);
 const appSecretSchema = z.string().trim().min(1).max(5000);
+export const AVATAR_APPLY_POLICY = Object.freeze({ delayMs: 1000, batchSize: 10, batchPauseMs: 5000 });
+const MAX_PAGE_COLLECTIONS = 500;
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function isMetaRateLimitError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return /rate.?limit|too many|(#4)|(#17)|(#32)|(#613)|throttl/.test(message);
+}
 
 function safeMessage(value, ...secrets) {
   const message = String(value || "Meta request failed");
@@ -16,15 +30,26 @@ function safeMessage(value, ...secrets) {
 }
 
 function publicPage(page) {
+  const bindings = Object.values(page.tokenBindings || {});
+  const verified = bindings.filter((binding) => binding?.status === "VERIFIED" && binding.pageToken);
+  const failed = bindings.find((binding) => binding?.status === "ERROR" || binding?.errorMessage);
   return {
     id: page.id,
     name: page.name || page.id,
     category: page.category || "",
-    avatar: page.avatar || "",
+    avatar: /^https?:\/\//i.test(String(page.avatar || "")) ? `/api/meta/pages/${page.id}/avatar` : page.avatar || "",
+    avatarMediaId: page.avatarMediaId || "",
+    avatarSource: page.avatarSource || (page.avatarMediaId ? "ai" : "meta"),
+    avatarUpdatedAt: page.avatarUpdatedAt || null,
+    avatarStatus: page.avatarStatus || (page.avatar ? "ready" : "missing"),
+    avatarError: page.avatarError || "",
     tasks: Array.isArray(page.tasks) ? page.tasks : [],
     hasToken: Boolean(page.accessToken),
     tokenIds: Object.keys(page.tokenBindings || {}),
     groupIds: Array.isArray(page.groupIds) ? page.groupIds : [],
+    health: verified.length ? "HEALTHY" : failed ? "ERROR" : "UNVERIFIED",
+    errorMessage: String(failed?.errorMessage || ""),
+    bindingCount: bindings.length,
   };
 }
 
@@ -63,6 +88,7 @@ function publicToken(token) {
 }
 
 function publicTokenGroup(group) {
+  const assignmentLoads = group.assignmentLoads && typeof group.assignmentLoads === "object" ? group.assignmentLoads : {};
   return {
     id: group.id,
     name: group.name,
@@ -71,6 +97,13 @@ function publicTokenGroup(group) {
     pageSourceTokenId: group.pageSourceTokenId || "",
     pageIds: Array.isArray(group.pageIds) ? group.pageIds : [],
     note: group.note || "",
+    maxPagesPerToken: Number(group.maxPagesPerToken || 0),
+    autoAssign: group.autoAssign !== false,
+    pageAssignments: group.pageTokenBindings && typeof group.pageTokenBindings === "object" ? { ...group.pageTokenBindings } : {},
+    assignmentLoads: Object.fromEntries(Object.entries(assignmentLoads).map(([id, count]) => [id, Number(count || 0)])),
+    assignedPageCount: Number(group.assignedPageCount || Object.keys(group.pageTokenBindings || {}).length || 0),
+    assignmentBlockedCount: Number(group.assignmentBlockedCount || 0),
+    assignmentUpdatedAt: group.assignmentUpdatedAt || null,
     createdAt: group.createdAt || null,
     updatedAt: group.updatedAt || null,
     pagesSyncedAt: group.pagesSyncedAt || null,
@@ -83,7 +116,7 @@ function publicPageGroup(group) {
     name: group.name,
     pageIds: Array.isArray(group.pageIds) ? group.pageIds : [],
     folderBinding: group.folderBinding || "",
-    scheduleConfig: group.scheduleConfig || { times: [], staggerMinutes: 15 },
+    scheduleConfig: normalizeScheduleConfig(group.scheduleConfig),
     createdAt: group.createdAt || null,
     updatedAt: group.updatedAt || null,
   };
@@ -125,6 +158,30 @@ async function jsonResponse(response, token, extraSecrets = []) {
   return body || {};
 }
 
+async function collectPagedPages(first, token, fetchImpl) {
+  const pages = Array.isArray(first?.data) ? [...first.data] : [];
+  const seen = new Set();
+  let next = first?.paging?.next || "";
+  let requests = 1;
+  while (next && requests < MAX_PAGE_COLLECTIONS && !seen.has(String(next))) {
+    seen.add(String(next));
+    let url;
+    try {
+      url = new URL(String(next));
+      if (!['http:', 'https:'].includes(url.protocol)) break;
+      if (!url.searchParams.has("access_token")) url.searchParams.set("access_token", token);
+    } catch {
+      break;
+    }
+    const response = await fetchImpl(url, { headers: { accept: "application/json" } });
+    const body = await jsonResponse(response, token);
+    if (Array.isArray(body.data)) pages.push(...body.data);
+    next = body?.paging?.next || "";
+    requests += 1;
+  }
+  return { ...first, data: pages };
+}
+
 export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "https://graph.facebook.com", graphVersion = GRAPH_VERSION } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch is required");
   const request = async ({ token, path, method = "GET", params = {}, body = null, headers = {} }) => {
@@ -147,7 +204,22 @@ export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "ht
   };
   return {
     me: (token) => request({ token, path: "me", params: { fields: "id,name" } }),
-    pages: (token) => request({ token, path: "me/accounts", params: { fields: "id,name,access_token,tasks" } }),
+    pages: async (token) => collectPagedPages(
+      await request({ token, path: "me/accounts", params: { fields: "id,name,access_token,tasks,picture{url}" } }),
+      token,
+      fetchImpl,
+    ),
+    updatePagePicture: async ({ token, pageId, bytes, filename = "page-avatar.png" }) => {
+      const form = new FormData();
+      const contentType = /\.jpe?g$/i.test(String(filename)) ? "image/jpeg" : "image/png";
+      form.append("source", new Blob([bytes], { type: contentType }), filename);
+      form.append("access_token", token);
+      const response = await fetchImpl(graphEndpoint(graphBase, graphVersion, `${pageId}/picture`), {
+        method: "POST",
+        body: form,
+      });
+      return jsonResponse(response, token);
+    },
     debugToken: async ({ token, appId, appSecret }) => {
       const appAccessToken = `${appId}|${appSecret}`;
       const url = graphEndpoint(graphBase, graphVersion, "debug_token", {
@@ -170,6 +242,12 @@ export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "ht
       path: `${pageId}/video_reels`,
       method: "POST",
       body: new URLSearchParams({ upload_phase: "finish", video_id: String(videoId), video_state: "PUBLISHED", description: String(description || "").slice(0, 2000) }),
+    }),
+    comment: ({ token, objectId, message }) => request({
+      token,
+      path: `${objectId}/comments`,
+      method: "POST",
+      body: new URLSearchParams({ message: String(message || "").slice(0, 10000) }),
     }),
     uploadChunk: async ({ token, uploadUrl, bytes }) => {
       const response = await fetchImpl(uploadUrl, {
@@ -200,6 +278,10 @@ function metaState(store) {
   for (const group of meta.tokenGroups) {
     group.tokenIds = Array.isArray(group.tokenIds) ? group.tokenIds : [];
     group.pageIds = Array.isArray(group.pageIds) ? group.pageIds : [];
+    group.strategy = normalizeTokenStrategy(group.strategy);
+    group.maxPagesPerToken = Math.max(0, Math.min(50, Math.floor(Number(group.maxPagesPerToken || 0) || 0)));
+    group.pageTokenBindings = group.pageTokenBindings && typeof group.pageTokenBindings === "object" ? group.pageTokenBindings : {};
+    group.assignmentLoads = group.assignmentLoads && typeof group.assignmentLoads === "object" ? group.assignmentLoads : {};
   }
   for (const group of meta.pageGroups) {
     group.pageIds = Array.isArray(group.pageIds) ? group.pageIds : [];
@@ -301,11 +383,99 @@ function syncPages(meta, tokenEntry, pages) {
   }
 }
 
-function healthyToken(meta, ids = []) {
+const tokenStrategies = new Set(["round_robin", "least_recently_used", "random"]);
+
+function normalizeTokenStrategy(value, fallback = "least_recently_used") {
+  const candidate = String(value || "").trim();
+  return tokenStrategies.has(candidate) ? candidate : fallback;
+}
+
+function usableTokenBinding(meta, page, tokenId) {
+  const token = meta.tokens.find((item) => item.id === tokenId);
+  const binding = page?.tokenBindings?.[tokenId];
+  return Boolean(token?.status === "ACTIVE" && token.token && binding?.status === "VERIFIED" && binding.pageToken && String(binding.verifiedPageId || page.id) === String(page.id) && binding.credentialFingerprint === fingerprint(token.token));
+}
+
+function tokenGroupPageIds(meta, group) {
+  const configured = [...new Set((Array.isArray(group.pageIds) ? group.pageIds : []).map(String).filter(Boolean))];
+  const sourceId = String(group.pageSourceTokenId || "");
+  if (sourceId) return meta.pages.filter((page) => usableTokenBinding(meta, page, sourceId)).map((page) => page.id);
+  const tokenIds = new Set((group.tokenIds || []).map(String));
+  const derived = meta.pages.filter((page) => [...tokenIds].some((tokenId) => usableTokenBinding(meta, page, tokenId))).map((page) => page.id);
+  return [...new Set([...configured, ...derived])].filter((id) => meta.pages.some((page) => page.id === id));
+}
+
+export function autoAssignTokenGroup(meta, group, { strategy = group.strategy, maxPagesPerToken = group.maxPagesPerToken, pageIds = null } = {}) {
+  const normalizedStrategy = normalizeTokenStrategy(strategy);
+  const max = Number.isFinite(Number(maxPagesPerToken)) ? Math.max(0, Math.min(50, Math.floor(Number(maxPagesPerToken)))) : 0;
+  const tokenIds = [...new Set((group.tokenIds || []).map(String).filter(Boolean))];
+  const selectedPageIds = pageIds ? [...new Set(pageIds.map(String))] : tokenGroupPageIds(meta, group);
+  const pages = selectedPageIds.map((id) => meta.pages.find((page) => page.id === id)).filter(Boolean);
+  const loads = Object.fromEntries(tokenIds.map((id) => [id, 0]));
+  const assignments = {};
+  const blocked = [];
+  let cursor = 0;
+  for (const page of pages) {
+    let choices = tokenIds.filter((tokenId) => usableTokenBinding(meta, page, tokenId));
+    if (!choices.length) {
+      blocked.push({ pageId: page.id, code: "missing_mapping" });
+      continue;
+    }
+    if (max > 0) choices = choices.filter((tokenId) => loads[tokenId] < max);
+    if (!choices.length) {
+      blocked.push({ pageId: page.id, code: "token_capacity" });
+      continue;
+    }
+    let selected;
+    if (normalizedStrategy === "round_robin") {
+      const available = new Set(choices);
+      for (let offset = 0; offset < tokenIds.length; offset += 1) {
+        const candidate = tokenIds[(cursor + offset) % tokenIds.length];
+        if (available.has(candidate)) {
+          selected = candidate;
+          cursor = (tokenIds.indexOf(candidate) + 1) % tokenIds.length;
+          break;
+        }
+      }
+    } else if (normalizedStrategy === "random") {
+      selected = choices[Math.floor(Math.random() * choices.length)];
+    } else {
+      selected = choices.slice().sort((left, right) => {
+        const a = meta.tokens.find((token) => token.id === left) || {};
+        const b = meta.tokens.find((token) => token.id === right) || {};
+        return String(a.lastUsed || "").localeCompare(String(b.lastUsed || "")) || Number(a.totalCalls || 0) - Number(b.totalCalls || 0) || tokenIds.indexOf(left) - tokenIds.indexOf(right);
+      })[0];
+    }
+    if (!selected) {
+      blocked.push({ pageId: page.id, code: "missing_mapping" });
+      continue;
+    }
+    assignments[page.id] = selected;
+    loads[selected] += 1;
+  }
+  Object.assign(group, {
+    strategy: normalizedStrategy,
+    maxPagesPerToken: max,
+    autoAssign: true,
+    pageIds: selectedPageIds,
+    pageTokenBindings: assignments,
+    assignmentLoads: loads,
+    assignedPageCount: Object.keys(assignments).length,
+    assignmentBlockedCount: blocked.length,
+    assignmentUpdatedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  return { group, assignedCount: Object.keys(assignments).length, blockedCount: blocked.length, blocked, loads };
+}
+
+function healthyToken(meta, ids = [], strategy = "least_recently_used") {
   const allowed = ids.length ? new Set(ids) : null;
   const candidates = meta.tokens.filter((token) => token.status === "ACTIVE" && token.token && (!allowed || allowed.has(token.id)));
   if (!candidates.length) return null;
-  return [...candidates].sort((a, b) => (a.rateStatus === "COOLDOWN_80") - (b.rateStatus === "COOLDOWN_80") || Number(a.appUsagePct || 0) - Number(b.appUsagePct || 0) || Number(a.callCountHour || 0) - Number(b.callCountHour || 0) || String(a.lastUsed || "").localeCompare(String(b.lastUsed || "")))[0];
+  const healthy = candidates.filter((token) => token.rateStatus !== "COOLDOWN_80" && Number(token.appUsagePct || 0) < 80);
+  const pool = healthy.length ? healthy : candidates;
+  if (strategy === "random") return pool[Math.floor(Math.random() * pool.length)];
+  return [...pool].sort((a, b) => String(a.lastUsed || "").localeCompare(String(b.lastUsed || "")) || Number(a.appUsagePct || 0) - Number(b.appUsagePct || 0) || Number(a.callCountHour || 0) - Number(b.callCountHour || 0) || Number(a.totalCalls || 0) - Number(b.totalCalls || 0))[0];
 }
 
 function requireToken(meta) {
@@ -316,14 +486,15 @@ function requireToken(meta) {
   return token;
 }
 
-function requireBoundPage(meta, tokenIds = []) {
+function requireBoundPage(meta, tokenIds = [], tokenGroup = null) {
   if (!meta.boundPageId || !meta.boundPageToken)
     throw new StudioError("Hãy chọn Page Meta trước khi kiểm tra hoặc đăng bài.", "META_PAGE_NOT_BOUND", 409);
   const current = meta.pages.find((page) => page.id === meta.boundPageId);
   if (current?.tokenBindings && meta.tokens?.length) {
     const allowed = new Set(tokenIds || []);
     const ids = Object.keys(current.tokenBindings).filter((id) => current.tokenBindings[id]?.pageToken && (!allowed.size || allowed.has(id)));
-    const selected = healthyToken(meta, ids);
+    const assignedId = tokenGroup?.pageTokenBindings?.[current.id];
+    const selected = healthyToken(meta, assignedId && ids.includes(assignedId) ? [assignedId] : ids, tokenGroup?.strategy);
     const binding = selected ? current.tokenBindings[selected.id] : null;
     if (binding) {
       selected.lastUsed = new Date().toISOString();
@@ -338,20 +509,46 @@ function requireBoundPage(meta, tokenIds = []) {
   };
 }
 
+function requirePostPage(store, meta, post, tokenIds = [], tokenGroup = null) {
+  const local = store.state.socialPages.find((page) => page.id === post?.pageId && !page.archived);
+  const targetId = String(local?.externalId || "").trim();
+  const current = targetId ? meta.pages.find((page) => page.id === targetId) : null;
+  const resolvedGroup = tokenGroup || (post?.pageGroupId ? meta.pageGroups.find((group) => group.id === post.pageGroupId && group.scheduleConfig?.tokenGroupId) && meta.tokenGroups.find((group) => group.id === meta.pageGroups.find((item) => item.id === post.pageGroupId)?.scheduleConfig?.tokenGroupId) : null) || meta.tokenGroups.find((group) => group.pageTokenBindings?.[current?.id]);
+  const resolvedTokenIds = tokenIds.length ? tokenIds : resolvedGroup?.tokenIds || [];
+  if (current?.tokenBindings && meta.tokens?.length) {
+    const allowed = new Set(resolvedTokenIds || []);
+    const ids = Object.keys(current.tokenBindings).filter((id) => current.tokenBindings[id]?.pageToken && (!allowed.size || allowed.has(id)));
+    const assignedId = resolvedGroup?.pageTokenBindings?.[current.id];
+    const selected = healthyToken(meta, assignedId && ids.includes(assignedId) ? [assignedId] : ids, resolvedGroup?.strategy);
+    const binding = selected ? current.tokenBindings[selected.id] : null;
+    if (binding) {
+      selected.lastUsed = new Date().toISOString();
+      selected.totalCalls = Number(selected.totalCalls || 0) + 1;
+      return { id: current.id, name: current.name || current.id, accessToken: binding.pageToken, tokenId: selected.id };
+    }
+  }
+  if (current?.accessToken) return { id: current.id, name: current.name || current.id, accessToken: current.accessToken };
+  if (targetId && targetId === meta.boundPageId && meta.boundPageToken) return requireBoundPage(meta, resolvedTokenIds, resolvedGroup);
+  throw new StudioError("Page local chưa có token Meta khỏe để đăng.", "META_PAGE_NOT_BOUND", 409);
+}
+
 function postPreflight(store, post, meta) {
   const checks = [];
   const active = meta.tokens?.find((token) => token.id === meta.activeTokenId && token.token);
-  const connected = meta.enabled !== false && Boolean(active?.token || meta.accessToken);
-  const managedPage = meta.pages?.find((item) => item.id === meta.boundPageId);
-  const bound = Boolean(meta.boundPageId && (managedPage?.accessToken || meta.boundPageToken));
+  const localPage = post ? store.state.socialPages.find((item) => item.id === post.pageId) : null;
+  const targetPageId = String(localPage?.externalId || "").trim();
+  const targetManagedPage = meta.pages?.find((item) => item.id === targetPageId);
+  const managedPage = targetManagedPage || meta.pages?.find((item) => item.id === meta.boundPageId);
+  const connected = meta.enabled !== false && Boolean(active?.token || meta.accessToken || managedPage?.accessToken);
+  const bound = Boolean(managedPage?.accessToken || (targetPageId && targetPageId === meta.boundPageId && meta.boundPageToken));
   checks.push({ key: "connected", ok: connected, message: connected ? "Meta đã kết nối." : "Chưa có Meta access token." });
-  checks.push({ key: "page", ok: bound, message: meta.boundPageId ? `Đã chọn Page ${meta.boundPageName || meta.boundPageId}.` : "Chưa chọn Page." });
+  checks.push({ key: "page", ok: bound, message: targetPageId ? `Đã chọn Page ${localPage?.name || targetPageId}.` : "Chưa gắn Page local với Meta." });
   checks.push({ key: "status", ok: Boolean(post && ["ready", "scheduled"].includes(post.status)), message: post ? `Trạng thái hiện tại: ${post.status}.` : "Không tìm thấy bài đăng." });
-  const page = post ? store.state.socialPages.find((item) => item.id === post.pageId) : null;
-  checks.push({ key: "page_match", ok: Boolean(post && page && page.externalId && page.externalId === meta.boundPageId), message: page?.externalId ? `Page local: ${page.externalId}.` : "Bài chưa gắn Page ID Meta." });
+  const page = localPage;
+  checks.push({ key: "page_match", ok: Boolean(post && page && page.externalId && targetManagedPage && page.externalId === targetManagedPage.id), message: page?.externalId ? `Page local: ${page.externalId}.` : "Bài chưa gắn Page ID Meta." });
   if (post?.pageGroupId) {
     const group = (meta.pageGroups || []).find((item) => item.id === post.pageGroupId);
-    const inGroup = Boolean(group && group.pageIds.includes(meta.boundPageId));
+    const inGroup = Boolean(group && targetPageId && group.pageIds.includes(targetPageId));
     checks.push({ key: "page_group", ok: inGroup, message: inGroup ? `Page thuộc nhóm ${group.name}.` : "Page bind không thuộc nhóm Page của bài." });
   }
   if (post?.tokenGroupId) {
@@ -363,10 +560,25 @@ function postPreflight(store, post, meta) {
   const media = post?.mediaIds?.[0] ? store.state.media.find((item) => item.id === post.mediaIds[0]) : null;
   checks.push({ key: "video", ok: Boolean(media?.kind === "video" && media.file), message: media?.kind === "video" ? "Đã có video local." : "Reel cần đúng một video local." });
   checks.push({ key: "caption", ok: Boolean(String(post?.caption || "").trim()), message: post?.caption ? "Đã có caption." : "Caption đang trống." });
+  const firstComment = String(post?.firstComment || "").trim();
+  const requiredLink = post?.contentType === "news" ? String(post?.website?.url || "").trim() : String(post?.linkUrl || "").trim();
+  const firstCommentReady = Boolean(firstComment) && (!requiredLink || firstComment.includes(requiredLink));
+  checks.push({ key: "first_comment", ok: firstCommentReady, message: !firstComment ? "Cần first comment chứa link đã xác minh trước khi đăng." : requiredLink && !firstComment.includes(requiredLink) ? "First comment chưa chứa đúng URL đã xác minh." : "Đã có first comment đúng URL." });
   return { ready: checks.every((check) => check.ok), checks };
 }
 
-export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}) {
+export function mountMetaRoutes(app, store, { client = createMetaClient(), llm = requestJsonContent, fetchImpl = globalThis.fetch } = {}) {
+  app.get("/api/meta/pages/:id/avatar", async (req, res) => {
+    const meta = metaState(store);
+    const page = meta.pages.find((item) => item.id === String(req.params.id));
+    const source = String(page?.avatar || "");
+    if (!page || !/^https?:\/\//i.test(source)) throw new StudioError("Không tìm thấy avatar Meta của Page.", "META_PAGE_AVATAR_NOT_FOUND", 404);
+    const response = await fetchImpl(source, { headers: { accept: "image/*" } });
+    if (!response.ok) throw new StudioError("Không tải được avatar Meta hiện tại.", "META_PAGE_AVATAR_UNAVAILABLE", 502);
+    const contentType = String(response.headers.get("content-type") || "image/jpeg").split(";", 1)[0];
+    if (!contentType.startsWith("image/")) throw new StudioError("Meta không trả về tệp ảnh avatar.", "META_PAGE_AVATAR_INVALID", 502);
+    res.set("Content-Type", contentType).set("Cache-Control", "private, max-age=300").send(Buffer.from(await response.arrayBuffer()));
+  });
   app.get("/api/meta", (req, res) => res.json(publicMeta(metaState(store))));
 
   app.post("/api/meta/connect", async (req, res) => {
@@ -432,10 +644,21 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
       const existing = meta.pages.find((item) => item.id === page.id);
       if (!existing) meta.pages.push(page);
     }
-    meta.pages = meta.pages.map((page) => ({
-      ...page,
-      ...(pages.find((item) => item.id === page.id) || {}),
-    }));
+    meta.pages = meta.pages.map((page) => {
+      const incoming = pages.find((item) => item.id === page.id);
+      if (!incoming) return page;
+      return {
+        ...page,
+        ...incoming,
+        // Graph can omit picture URLs on refresh; retain a generated or cached avatar.
+        avatar: incoming.avatar || page.avatar || "",
+        avatarMediaId: page.avatarMediaId || "",
+        avatarSource: page.avatarSource || (incoming.avatar ? "meta" : ""),
+        avatarUpdatedAt: page.avatarUpdatedAt || null,
+        avatarStatus: incoming.avatar || page.avatar ? "ready" : "missing",
+        avatarError: page.avatarError || "",
+      };
+    });
     store.save();
     res.json(publicMeta(meta));
   });
@@ -510,6 +733,47 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     res.status(201).json({ token: publicToken(entry), pages: pages.map(publicPage) });
   });
 
+  app.post(["/api/meta/tokens/bulk", "/api/tokens/bulk"], async (req, res) => {
+    const body = req.body || {};
+    const raw = Array.isArray(body.accessTokens || body.tokens)
+      ? (body.accessTokens || body.tokens)
+      : String(body.text || "").split(/[\r\n,]+/);
+    const tokens = [...new Set(raw.map((value) => String(value || "").trim()).filter(Boolean))].slice(0, 100);
+    if (!tokens.length) throw new StudioError("Hãy dán ít nhất một token.", "META_TOKEN_LIST_EMPTY", 422);
+    const kind = tokenKindSchema.parse(body.kind || "SYSTEM_USER");
+    const meta = metaState(store);
+    const results = [];
+    for (const rawToken of tokens) {
+      let token;
+      try {
+        token = accessTokenSchema.parse(rawToken);
+        const credentials = kind === "VIA_TOKEN"
+          ? { appId: appIdSchema.parse(body.appId), appSecret: appSecretSchema.parse(body.appSecret) }
+          : { appId: "", appSecret: "" };
+        if (kind === "VIA_TOKEN") await validateViaToken(client, { token, ...credentials });
+        const user = await client.me(token);
+        const pageResponse = await client.pages(token);
+        const pages = Array.isArray(pageResponse?.data)
+          ? pageResponse.data.filter((page) => pageIdSchema.safeParse(String(page.id)).success).map((page) => ({
+            id: String(page.id), name: String(page.name || page.id).slice(0, 200), category: String(page.category || "").slice(0, 200), avatar: String(page.picture?.data?.url || page.avatar || ""), tasks: Array.isArray(page.tasks) ? page.tasks.slice(0, 30).map(String) : [], accessToken: String(page.access_token || ""),
+          }))
+          : [];
+        if (!pages.length) throw new StudioError("Token không trả về Page có quyền quản lý.", "META_NO_PAGES", 409);
+        const entry = upsertToken(meta, token, { user, pages, ...(kind === "VIA_TOKEN" ? { appId: body.appId, appSecret: body.appSecret } : {}) });
+        entry.name = String(body.name || entry.name).trim().slice(0, 120) || entry.name;
+        entry.kind = kind;
+        entry.note = String(body.note || entry.note || "").slice(0, 2000);
+        entry.userId = String(user.id || entry.userId || "");
+        syncPages(meta, entry, pages);
+        results.push({ ok: true, token: publicToken(entry), pages: pages.length });
+      } catch (error) {
+        results.push({ ok: false, tokenMasked: maskToken(token || rawToken), error: safeMessage(error.message, token, body.appSecret) });
+      }
+    }
+    store.save();
+    res.status(201).json({ results, meta: publicMeta(meta) });
+  });
+
   app.post(["/api/meta/tokens/:id/refresh-pages", "/api/tokens/:id/refresh-pages"], async (req, res) => {
     const meta = metaState(store);
     const entry = meta.tokens.find((item) => item.id === req.params.id);
@@ -555,7 +819,12 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
       const replacement = Object.values(page.tokenBindings || {})[0];
       page.accessToken = replacement?.pageToken || "";
     }
-    for (const group of meta.tokenGroups) group.tokenIds = (group.tokenIds || []).filter((id) => id !== req.params.id);
+    for (const group of meta.tokenGroups) {
+      group.tokenIds = (group.tokenIds || []).filter((id) => id !== req.params.id);
+      group.pageTokenBindings = Object.fromEntries(Object.entries(group.pageTokenBindings || {}).filter(([, tokenId]) => tokenId !== req.params.id));
+      group.assignmentLoads = Object.fromEntries(Object.entries(group.assignmentLoads || {}).filter(([tokenId]) => tokenId !== req.params.id));
+      group.assignedPageCount = Object.keys(group.pageTokenBindings).length;
+    }
     if (meta.activeTokenId === req.params.id) {
       const replacement = meta.tokens.find((token) => token.token);
       meta.activeTokenId = replacement?.id || "";
@@ -577,10 +846,27 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     const now = new Date().toISOString();
     let group = meta.tokenGroups.find((item) => item.id === id);
     if (!group) { group = { id, createdAt: now }; meta.tokenGroups.push(group); }
-    Object.assign(group, { name, strategy, tokenIds, note: String(body.note || "").slice(0, 2000), pageSourceTokenId: String(body.pageSourceTokenId || body.page_source_token_id || group.pageSourceTokenId || ""), updatedAt: now });
+    const maxPagesPerToken = Math.max(0, Math.min(50, Math.floor(Number(body.maxPagesPerToken ?? body.max_pages_per_token ?? group.maxPagesPerToken ?? 0) || 0)));
+    Object.assign(group, { name, strategy, tokenIds, maxPagesPerToken, autoAssign: body.autoAssign !== false, note: String(body.note || "").slice(0, 2000), pageSourceTokenId: String(body.pageSourceTokenId || body.page_source_token_id || group.pageSourceTokenId || ""), updatedAt: now });
     if (group.pageSourceTokenId) group.pageIds = meta.pages.filter((page) => page.tokenBindings?.[group.pageSourceTokenId]).map((page) => page.id);
+    else group.pageIds = tokenGroupPageIds(meta, group);
+    const assignment = group.autoAssign ? autoAssignTokenGroup(meta, group, { strategy, maxPagesPerToken }) : null;
     store.save();
-    res.json({ group: publicTokenGroup(group) });
+    res.json({ group: publicTokenGroup(group), assignment: assignment ? { assignedCount: assignment.assignedCount, blockedCount: assignment.blockedCount, loads: assignment.loads, blocked: assignment.blocked } : null });
+  });
+
+  app.post(["/api/meta/token-groups/:id/auto-assign", "/api/token-groups/:id/auto-assign"], (req, res) => {
+    const meta = metaState(store);
+    const group = meta.tokenGroups.find((item) => item.id === req.params.id);
+    if (!group) throw new StudioError("Không tìm thấy nhóm token.", "META_TOKEN_GROUP_NOT_FOUND", 404);
+    const strategy = normalizeTokenStrategy(req.body?.strategy, group.strategy);
+    const maxPagesPerToken = req.body?.maxPagesPerToken === undefined && req.body?.max_pages_per_token === undefined
+      ? group.maxPagesPerToken
+      : Math.max(0, Math.min(50, Math.floor(Number(req.body?.maxPagesPerToken ?? req.body?.max_pages_per_token) || 0)));
+    const requestedPageIds = Array.isArray(req.body?.pageIds) ? req.body.pageIds.map(String) : null;
+    const assignment = autoAssignTokenGroup(meta, group, { strategy, maxPagesPerToken, pageIds: requestedPageIds });
+    store.save();
+    res.json({ group: publicTokenGroup(group), assignment: { assignedCount: assignment.assignedCount, blockedCount: assignment.blockedCount, loads: assignment.loads, blocked: assignment.blocked } });
   });
 
   app.post(["/api/meta/token-groups/:id/rebind-pages", "/api/token-groups/:id/rebind-pages"], (req, res) => {
@@ -590,6 +876,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     if (!group.pageSourceTokenId || !meta.tokens.some((token) => token.id === group.pageSourceTokenId)) throw new StudioError("Nhóm chưa có token nguồn Page hợp lệ.", "META_TOKEN_SOURCE_NOT_FOUND", 409);
     group.pageIds = meta.pages.filter((page) => page.tokenBindings?.[group.pageSourceTokenId]).map((page) => page.id);
     group.pagesSyncedAt = new Date().toISOString();
+    if (group.autoAssign !== false) autoAssignTokenGroup(meta, group);
     store.save();
     res.json({ group: publicTokenGroup(group) });
   });
@@ -612,7 +899,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     const now = new Date().toISOString();
     let group = meta.pageGroups.find((item) => item.id === id);
     if (!group) { group = { id, createdAt: now }; meta.pageGroups.push(group); }
-    Object.assign(group, { name, pageIds, folderBinding: String(body.folderBinding || body.folder_binding || group.folderBinding || ""), scheduleConfig: body.scheduleConfig || body.schedule_config || group.scheduleConfig || { times: [], staggerMinutes: 15 }, updatedAt: now });
+    Object.assign(group, { name, pageIds, folderBinding: String(body.folderBinding || body.folder_binding || group.folderBinding || ""), scheduleConfig: normalizeScheduleConfig(body.scheduleConfig || body.schedule_config || group.scheduleConfig || {}), updatedAt: now });
     for (const page of meta.pages) page.groupIds = meta.pageGroups.filter((item) => item.pageIds.includes(page.id)).map((item) => item.id);
     store.save();
     res.json({ group: publicPageGroup(group) });
@@ -624,6 +911,112 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     for (const page of meta.pages) page.groupIds = (page.groupIds || []).filter((id) => id !== req.params.id);
     store.save();
     res.json({ ok: true });
+  });
+
+  app.post(["/api/meta/page-groups/:id/prune", "/api/groups/:id/prune"], (req, res) => {
+    const meta = metaState(store);
+    const group = meta.pageGroups.find((item) => item.id === req.params.id);
+    if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
+    const before = [...group.pageIds];
+    const healthy = (page) => Object.entries(page.tokenBindings || {}).some(([tokenId, binding]) => {
+      const token = meta.tokens.find((item) => item.id === tokenId);
+      return token?.status === "ACTIVE" && Boolean(binding?.pageToken) && binding.status !== "ERROR";
+    });
+    group.pageIds = group.pageIds.filter((id) => healthy(meta.pages.find((page) => page.id === id) || {}));
+    for (const page of meta.pages) page.groupIds = meta.pageGroups.filter((item) => item.pageIds.includes(page.id)).map((item) => item.id);
+    group.updatedAt = new Date().toISOString();
+    store.save();
+    res.json({ group: publicPageGroup(group), removedPageIds: before.filter((id) => !group.pageIds.includes(id)) });
+  });
+
+  app.post("/api/meta/page-avatars/generate", async (req, res) => {
+    const body = req.body || {};
+    const meta = metaState(store);
+    const group = body.groupId ? meta.pageGroups.find((item) => item.id === String(body.groupId)) : null;
+    if (body.groupId && !group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
+    const requestedIds = Array.isArray(body.pageIds) ? body.pageIds.map(String) : group?.pageIds || [];
+    const pages = [...new Set(requestedIds)].map((id) => meta.pages.find((page) => page.id === id)).filter(Boolean).slice(0, 200);
+    if (!pages.length) throw new StudioError("Chọn ít nhất một Page để đổi avatar.", "META_PAGE_SELECTION_EMPTY", 422);
+    const config = await resolveMcImageConfig(store);
+    if (config.enabled === false || !config.endpoint || !config.model) throw new StudioError("Chưa cấu hình AI image endpoint cho avatar.", "META_AVATAR_IMAGE_CONFIG_REQUIRED", 422);
+    let prompt = String(body.prompt || "Professional editorial social media page avatar, clean bold composition, no text, no logos, square portrait.").trim();
+    if (body.useLlm === true) {
+      const generated = await llm(store, "Return JSON {prompt}. Rewrite the supplied avatar brief into one precise image-generation prompt for a consistent square social-media Page avatar. Keep the brand subject and visual intent, use a polished editorial style, and forbid text, watermarks, logos, trademarks and real-person likenesses unless explicitly requested. Do not add unsupported claims or named people.", {
+        brief: prompt,
+        pages: pages.map((page) => ({ name: page.name, category: page.category })).slice(0, 20),
+      });
+      prompt = z.object({ prompt: z.string().trim().min(10).max(3500) }).parse(generated).prompt;
+    }
+    const output = await generateImageEndpoint({ config, prompt: prompt.slice(0, 3500) });
+    const extension = output.extension === ".jpg" ? ".jpg" : ".png";
+    const temporary = path.join(store.root, "temp", `${randomUUID()}${extension}`);
+    await fs.writeFile(temporary, output.bytes);
+    let media;
+    try {
+      media = await importMedia(store, temporary, { name: `AI Page Avatar ${new Date().toISOString().replace(/[:.]/g, "-")}${extension}`, generated: true, move: true, mediaType: "page-avatar" });
+    } finally {
+      await fs.rm(temporary, { force: true }).catch(() => {});
+    }
+    const apply = body.apply === true;
+    const bytes = apply ? await fs.readFile(media.file) : null;
+    const avatarUrl = `/api/media/${media.id}/thumbnail`;
+    const results = [];
+    const tokenRateState = new Map();
+    const pausedTokenIds = new Set();
+    for (const page of pages) {
+      const bindingEntry = Object.entries(page.tokenBindings || {}).find(([tokenId, binding]) => {
+        const token = meta.tokens.find((item) => item.id === tokenId);
+        return token?.status === "ACTIVE" && binding?.pageToken && binding.status !== "ERROR";
+      });
+      if (!bindingEntry) {
+        page.avatarStatus = "error";
+        page.avatarError = "Page không có token khỏe.";
+        results.push({ pageId: page.id, pageName: page.name, ok: false, error: "Page không có token khỏe." });
+        continue;
+      }
+      if (!apply) {
+        page.avatar = avatarUrl;
+        page.avatarMediaId = media.id;
+        page.avatarSource = "ai-preview";
+        page.avatarUpdatedAt = new Date().toISOString();
+        page.avatarStatus = "preview";
+        page.avatarError = "";
+        results.push({ pageId: page.id, pageName: page.name, ok: true, status: "preview" });
+        continue;
+      }
+      const tokenId = bindingEntry[0];
+      if (pausedTokenIds.has(tokenId)) {
+        const error = "Meta đang giới hạn tốc độ; Page được tạm bỏ qua để tránh gửi dồn request.";
+        page.avatarStatus = "error";
+        page.avatarError = error;
+        results.push({ pageId: page.id, pageName: page.name, ok: false, error, status: "rate_limited" });
+        continue;
+      }
+      try {
+        if (typeof client.updatePagePicture !== "function") throw new StudioError("Meta client chưa hỗ trợ cập nhật avatar.", "META_AVATAR_UPDATE_UNSUPPORTED", 502);
+        const state = tokenRateState.get(tokenId) || { calls: 0, lastCallAt: 0 };
+        const elapsed = Date.now() - state.lastCallAt;
+        const spacingWait = state.calls > 0 ? Math.max(0, AVATAR_APPLY_POLICY.delayMs - elapsed) : 0;
+        const batchWait = state.calls > 0 && state.calls % AVATAR_APPLY_POLICY.batchSize === 0 ? AVATAR_APPLY_POLICY.batchPauseMs : 0;
+        await wait(Math.max(spacingWait, batchWait));
+        await client.updatePagePicture({ token: bindingEntry[1].pageToken, pageId: page.id, bytes, filename: `page-${page.id}${extension}` });
+        tokenRateState.set(tokenId, { calls: state.calls + 1, lastCallAt: Date.now() });
+        page.avatar = avatarUrl;
+        page.avatarMediaId = media.id;
+        page.avatarSource = "ai-meta";
+        page.avatarUpdatedAt = new Date().toISOString();
+        page.avatarStatus = "updated";
+        page.avatarError = "";
+        results.push({ pageId: page.id, pageName: page.name, ok: true, status: "updated" });
+      } catch (error) {
+        if (isMetaRateLimitError(error)) pausedTokenIds.add(tokenId);
+        page.avatarStatus = "error";
+        page.avatarError = safeMessage(error.message, bindingEntry[1].pageToken);
+        results.push({ pageId: page.id, pageName: page.name, ok: false, error: page.avatarError, status: isMetaRateLimitError(error) ? "rate_limited" : "error" });
+      }
+    }
+    store.save();
+    res.status(201).json({ media: { id: media.id, url: `/api/media/${media.id}/file`, thumbnailUrl: avatarUrl }, avatarUrl, prompt, promptSource: body.useLlm === true ? "llm" : "manual", apply, throttle: { ...AVATAR_APPLY_POLICY, tokenCount: tokenRateState.size, rateLimitedTokenCount: pausedTokenIds.size }, results });
   });
 
   app.delete("/api/meta", (req, res) => {
@@ -639,17 +1032,58 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     res.json(postPreflight(store, post, metaState(store)));
   });
 
-  app.post("/api/meta/publish/reel", async (req, res) => {
-    const postId = z.string().uuid().parse(req.body?.postId);
-    const idempotencyKey = z.string().trim().min(8).max(160).parse(req.body?.idempotencyKey || `${postId}:${store.require("socialPosts", postId).revision}`);
-    const post = store.require("socialPosts", postId);
+  const publishReel = async ({ postId, idempotencyKey }) => {
+    const parsedPostId = z.string().uuid().parse(postId);
+    const parsedKey = z.string().trim().min(8).max(160).parse(idempotencyKey || `${parsedPostId}:${store.require("socialPosts", parsedPostId).revision}`);
     const meta = metaState(store);
-    const existing = meta.publications.find((item) => item.idempotencyKey === idempotencyKey);
-    if (existing?.status === "published") return res.json(existing);
+    const existing = meta.publications.find((item) => item.idempotencyKey === parsedKey);
+    if (existing?.status === "published") return existing;
+    const post = store.require("socialPosts", parsedPostId);
+    if (existing?.status === "published_comment_error") {
+      const check = postPreflight(store, post, meta);
+      if (!check.ready) throw new StudioError("Preflight Meta chưa đạt; hãy sửa first comment trước khi thử lại.", "META_PREFLIGHT_FAILED", 409);
+      if (typeof client.comment !== "function") throw new StudioError("Meta client chưa hỗ trợ đăng first comment.", "META_COMMENT_UNSUPPORTED", 502);
+      const tokenGroup = post.tokenGroupId ? meta.tokenGroups.find((group) => group.id === post.tokenGroupId) : null;
+      const page = requirePostPage(store, meta, post, tokenGroup?.tokenIds || [], tokenGroup);
+      try {
+        await client.comment({ token: page.accessToken, objectId: existing.externalPostId, message: post.firstComment });
+      } catch (error) {
+        const retryRecord = {
+          ...existing,
+          status: "published_comment_error",
+          firstCommentStatus: "error",
+          firstCommentError: safeMessage(error.message, page.accessToken),
+          removedFromQueue: false,
+        };
+        meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(retryRecord).slice(-200);
+        Object.assign(post, {
+          automationStatus: "meta_error",
+          automationError: retryRecord.firstCommentError,
+          publication: {
+            source: "meta",
+            externalPostId: retryRecord.externalPostId,
+            permalink: retryRecord.permalink,
+            publishedAt: retryRecord.publishedAt,
+            firstCommentStatus: "error",
+            firstCommentError: retryRecord.firstCommentError,
+          },
+          updatedAt: new Date().toISOString(),
+        });
+        store.save();
+        return { ...retryRecord, post: { ...post } };
+      }
+      const recovered = { ...existing, status: "published", firstCommentStatus: "published", removedFromQueue: true };
+      delete recovered.firstCommentError;
+      meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(recovered).slice(-200);
+      store.state.socialPosts = store.state.socialPosts.filter((item) => item.id !== post.id);
+      store.save();
+      return recovered;
+    }
     const check = postPreflight(store, post, meta);
     if (!check.ready) throw new StudioError("Preflight Meta chưa đạt; chưa gửi bài.", "META_PREFLIGHT_FAILED", 409);
+    if (typeof client.comment !== "function") throw new StudioError("Meta client chưa hỗ trợ đăng first comment.", "META_COMMENT_UNSUPPORTED", 502);
     const tokenGroup = post.tokenGroupId ? meta.tokenGroups.find((group) => group.id === post.tokenGroupId) : null;
-    const page = requireBoundPage(meta, tokenGroup?.tokenIds || []);
+    const page = requirePostPage(store, meta, post, tokenGroup?.tokenIds || [], tokenGroup);
     const media = store.state.media.find((item) => item.id === post.mediaIds[0]);
     const bytes = await fs.readFile(media.file);
     const start = await client.startReel({ token: page.accessToken, pageId: page.id, fileSize: bytes.byteLength });
@@ -658,12 +1092,57 @@ export function mountMetaRoutes(app, store, { client = createMetaClient() } = {}
     if (start.upload_url) await client.uploadChunk({ token: page.accessToken, uploadUrl: start.upload_url, bytes });
     const finish = await client.finishReel({ token: page.accessToken, pageId: page.id, videoId, description: post.caption });
     const externalPostId = String(finish.id || videoId);
-    const record = { idempotencyKey, status: "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, publishedAt: new Date().toISOString() };
-    meta.publications = meta.publications.filter((item) => item.idempotencyKey !== idempotencyKey).concat(record).slice(-200);
-    Object.assign(post, { status: "published", publication: { source: "meta", externalPostId: record.externalPostId, permalink: record.permalink || `https://www.facebook.com/${record.externalPostId}`, publishedAt: record.publishedAt }, revision: post.revision + 1, updatedAt: record.publishedAt });
+    let firstCommentStatus = "published";
+    let firstCommentError = "";
+    try {
+      await client.comment({ token: page.accessToken, objectId: externalPostId, message: post.firstComment });
+    } catch (error) {
+      firstCommentStatus = "error";
+      firstCommentError = safeMessage(error.message, page.accessToken);
+    }
+    const record = { idempotencyKey: parsedKey, status: firstCommentError ? "published_comment_error" : "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus, ...(firstCommentError ? { firstCommentError } : {}), removedFromQueue: !firstCommentError, publishedAt: new Date().toISOString() };
+    meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(record).slice(-200);
+    if (firstCommentError) {
+      Object.assign(post, {
+        automationStatus: "meta_error",
+        automationError: firstCommentError,
+        publication: {
+          source: "meta",
+          externalPostId: record.externalPostId,
+          permalink: record.permalink,
+          publishedAt: record.publishedAt,
+          firstCommentStatus: "error",
+          firstCommentError,
+        },
+        updatedAt: record.publishedAt,
+      });
+      store.save();
+      return { ...record, post: { ...post } };
+    }
+    store.state.socialPosts = store.state.socialPosts.filter((item) => item.id !== post.id);
     store.save();
-    res.json(record);
+    return record;
+  };
+
+  app.post("/api/meta/publish/reel", async (req, res) => {
+    const postId = z.string().uuid().parse(req.body?.postId);
+    const idempotencyKey = z.string().trim().min(8).max(160).parse(req.body?.idempotencyKey || `${postId}:${store.require("socialPosts", postId).revision}`);
+    res.json(await publishReel({ postId, idempotencyKey }));
   });
+
+  const autoPublishNews = async (postId) => {
+    const meta = metaState(store);
+    if (meta.enabled === false || !meta.boundPageId) throw new StudioError("Kết nối Meta và chọn Page trước khi auto post News.", "META_PAGE_NOT_BOUND", 409);
+    const localPage = store.state.socialPages.find((page) => page.externalId === meta.boundPageId && !page.archived);
+    if (!localPage) throw new StudioError("Hãy tạo hoặc gắn local Page trùng với Page Meta trước khi auto post News.", "META_LOCAL_PAGE_REQUIRED", 409);
+    let post = store.require("socialPosts", postId);
+    if (post.pageId !== localPage.id || post.status !== "ready") {
+      post = store.patch("socialPosts", post.id, { pageId: localPage.id, status: "ready", scheduledAt: null, revision: post.revision + 1 });
+    }
+    return publishReel({ postId: post.id, idempotencyKey: `news-auto:${post.id}:${post.revision}` });
+  };
+
+  return { publishReel, autoPublishNews };
 }
 
 export { publicMeta, postPreflight };

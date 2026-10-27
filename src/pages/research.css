@@ -10,6 +10,7 @@
   padding-bottom: 60px;
 }
 .research-heading { align-items: flex-end; }
+.research-heading-actions { display: flex; align-items: center; gap: 12px; }
 .research-heading h1 { max-width: 720px; }
 .research-heading-mark { display: flex; align-items: center; gap: 9px; padding: 10px 13px; color: var(--research-accent); background: var(--research-accent-soft); border: 1px solid #cce9df; border-radius: 12px; font-size: 12px; font-weight: 700; }
 .research-heading-mark svg { stroke-width: 1.8; }
@@ -93,6 +94,7 @@
 .llm-card .research-form-actions { margin-top: 2px; }
 @media (max-width: 760px) {
   .research-card { padding: 17px; }
+  .research-heading-actions { align-items: flex-end; flex-direction: column; }
   .research-card-heading, .research-heading, .dreamface-account { align-items: start; flex-direction: column; }
   .research-form-grid { grid-template-columns: 1fr; gap: 0; }
   .research-form-actions { align-items: stretch; flex-direction: column; }
@@ -126,6 +128,7 @@
   border-radius: 11px;
   background: linear-gradient(110deg, #2f293c, #20283a);
 }
+.research-auto-video .button { white-space: nowrap; }
 .research-auto-video > span {
   display: grid;
   gap: 4px;
@@ -140,6 +143,36 @@
   font-size: 10px;
   line-height: 1.45;
 }
+.research-auto-video-controls {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 3px;
+  min-width: 82px;
+}
+.research-auto-video-controls label {
+  display: grid;
+  gap: 4px;
+  color: #ffe3ce;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.research-auto-video-controls input {
+  width: 82px;
+  padding: 7px 8px;
+  color: #f5f8ff;
+  background: #172033;
+  border: 1px solid #68728b;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+.research-auto-video-controls > small {
+  color: #9ba7bd;
+  font-size: 9px;
+}
 .research-auto-video svg {
   color: #ffc18c;
 }
@@ -150,5 +183,12 @@
   }
   .research-auto-video .button {
     width: 100%;
+  }
+  .research-auto-video-controls {
+    grid-template-columns: auto 1fr;
+    align-items: end;
+  }
+  .research-auto-video-controls > small {
+    padding-bottom: 8px;
   }
 }

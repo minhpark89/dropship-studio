@@ -6,6 +6,34 @@ import { randomUUID } from "node:crypto";
 import { Store } from "../server/store.js";
 import { binary, importMedia, probe, runProcess } from "../server/media.js";
 import { renderNewsBroadcast } from "../server/news-render.js";
+import { rankNewsImages, writeNewsNarration } from "../server/news-plan.js";
+
+test("news preparation bounds long source labels and falls back when image ranking is empty", async () => {
+  const research = {
+    headline: "Trump rallies Michigan Republicans",
+    script: "A verified report describes a political rally in Michigan.",
+    articles: [{
+      source: '"President Donald Trump rallies Michigan Republicans in Port Huron - The Detroit News when:1d" - Google News',
+      summary: "A report describes the event and its location.",
+      url: "https://news.example.test/story",
+    }],
+  };
+  const narration = await writeNewsNarration({}, research, {
+    llm: async () => ({
+      headline: "Trump rallies Michigan Republicans",
+      summary: "A Michigan rally drew attention today. The report says supporters gathered as the political event unfolded.",
+      imageQueries: ["Trump rally", "Michigan supporters"],
+    }),
+  });
+  assert.ok(narration.source.length <= 100);
+
+  const candidates = [
+    { id: "wikimedia:1", title: "Trump rally photo", query: "Trump rally", imageUrl: "https://upload.wikimedia.org/one.jpg" },
+    { id: "wikimedia:2", title: "Michigan supporters photo", query: "Michigan supporters", imageUrl: "https://upload.wikimedia.org/two.jpg" },
+  ];
+  const ranked = await rankNewsImages({}, research, candidates, { llm: async () => ({ selectedImageIds: [] }) });
+  assert.deepEqual(ranked.map((image) => image.id), ["wikimedia:1", "wikimedia:2"]);
+});
 
 test("news broadcast uses a narrated presenter, animated editorial images and the first-comment CTA", { timeout: 150000 }, async (t) => {
   const root = path.resolve(".verification", `news-broadcast-${randomUUID()}`);

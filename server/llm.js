@@ -2,11 +2,26 @@ import { llmSettingsSchema } from "../shared/research-contracts.js";
 import { StudioError } from "./store.js";
 import { readChatCompletion } from "./llm-response.js";
 
+export function normalizeLlmEndpoint(value) {
+  const raw = String(value || "").trim();
+  try {
+    const url = new URL(raw);
+    url.pathname = url.pathname
+      .replace(/\/(?:chat\/completions|responses|models)\/?$/i, "")
+      .replace(/\/+$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return raw.replace(/\/(?:chat\/completions|responses|models)\/?$/i, "").replace(/\/+$/, "");
+  }
+}
+
 export async function requestJsonContent(store, system, input, { fetchImpl = globalThis.fetch, signal } = {}) {
   const settings = llmSettingsSchema.parse(store.state.settings.llm || {});
   if (!settings.enabled) throw new StudioError("Enable and test the LLM in Settings first.", "LLM_DISABLED", 409);
-  const endpoint = settings.endpoint.replace(/\/+$/, "");
-  const url = /\/chat\/completions$/i.test(endpoint) ? endpoint : `${endpoint}/chat/completions`;
+  const endpoint = normalizeLlmEndpoint(settings.endpoint);
+  const url = `${endpoint}/chat/completions`;
   const timeout = AbortSignal.timeout(settings.timeoutSeconds * 1000);
   const headers = { "content-type": "application/json", accept: "application/json" };
   if (settings.apiKey) headers.authorization = `Bearer ${settings.apiKey}`;

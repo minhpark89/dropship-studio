@@ -123,8 +123,14 @@ function App() {
       .catch((error) => notify(error.message, "error"));
     const events = new EventSource("/api/events");
     events.onmessage = (event) => {
-      setData((previous) => ({ ...previous, ...JSON.parse(event.data) }));
-      setConnection(true);
+      try {
+        const next = JSON.parse(event.data);
+        if (next && typeof next === "object") setData((previous) => ({ ...previous, ...next }));
+        setConnection(true);
+      } catch {
+        setConnection(false);
+        notify("Dữ liệu cập nhật từ máy chủ không hợp lệ; đang thử lại.", "error");
+      }
     };
     events.onerror = () => setConnection(false);
     return () => events.close();

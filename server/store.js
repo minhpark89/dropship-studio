@@ -61,6 +61,8 @@ export class Store extends EventEmitter {
           articleLinkLabel: "Read the full article",
           productFirstCommentTemplate: "",
           newsFirstCommentTemplate: "",
+          autoPublishNews: true,
+          autoPostNews: false,
         },
         llm: {
           enabled: false,
@@ -116,6 +118,7 @@ export class Store extends EventEmitter {
       linkUrl: "",
       linkLabel: "",
       sourceUrl: "",
+      coverImageUrl: "",
       articleBody: "",
       researchId: null,
       ...post,
@@ -142,6 +145,8 @@ export class Store extends EventEmitter {
         articleLinkLabel: "Read the full article",
         productFirstCommentTemplate: "",
         newsFirstCommentTemplate: "",
+        autoPublishNews: true,
+        autoPostNews: false,
       },
       llm: {
         enabled: false,

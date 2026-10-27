@@ -4,9 +4,9 @@ Viral Studio is a Windows desktop app for research, AI video production, timelin
 
 ## Download for Windows
 
-- [Installer](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.3/Viral.Studio.Setup.0.5.3.exe) — install to Windows and create the Desktop shortcut.
-- [Portable](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.3/Viral.Studio.0.5.3.exe) — run directly without installation.
-- [SHA-256 checksums](https://github.com/minhpark89/dropship-studio/releases/download/v0.5.3/SHA256SUMS.txt)
+- Portable v0.5.6: `release/Viral Studio 0.5.6.exe`
+- Installer v0.5.6: `release/Viral Studio Setup 0.5.6.exe`
+- SHA-256 checksums: `release/SHA256SUMS.txt`
 
 The desktop app starts with a version/loading screen, uses the Viral Studio icon, and stores user data in `Viral Data`; an installed upgrade can read legacy `Dropship Data` automatically.
 
@@ -18,12 +18,16 @@ The desktop app starts with a version/loading screen, uses the Viral Studio icon
 - Separate Channels, Content, Product and Research workspaces; Page selection, Meta token status and Page management.
 - Content management with News/Product type, first comment, store or article link, approved render-library video selection, schedule and handoff export.
 - DreamFace generation for news and product videos, local daily-rotation profiles, OpenAI-compatible research and FFmpeg render QA.
-- Research image cards allow Wikimedia/BBC thumbnails through the local UI policy and load them eagerly with a visible fallback when a source is unavailable. News broadcasts automatically create one original AI MC still per DreamFace profile from the saved Highlight-compatible image endpoint, upload it before generation, select Avatar 3.0 Fast at 720p with the visible 1 Free Daily option, then compose the narrated presenter with smooth zoom, pan and crossfade transitions. DreamFace Image is the automatic fallback when the primary image endpoint is unavailable.
-- DreamFace profiles can generate and save random sign-in details for reuse. Registration opens the official website and pauses for any CAPTCHA or verification; creating a local profile does not claim an authenticated account or create a Gmail inbox.
-- Import the website domain, username and password from installed Highlight/Longform settings, test the connection, and explicitly publish a reviewed news article from Content. Its verified public URL becomes the first comment. Website passwords are encrypted separately from workspace snapshots.
+- Research image cards allow Wikimedia and article thumbnails through the local UI policy and load them eagerly with a visible fallback when a source is unavailable. News broadcasts automatically create one original AI MC still per DreamFace profile from the saved Highlight-compatible image endpoint, upload it before generation, prefer Avatar 3.0 Fast at 720p, recognize DreamFace's quota-prefixed Generate button, and fall back to an available avatar/resolution when the account does not expose that exact option. The result composes a narrated presenter with a fact-based hook, complete editorial images in a framed card, smooth zoom, pan and crossfade transitions. DreamFace Image is the automatic fallback when the primary image endpoint is unavailable.
+- DreamFace profiles can generate and save sign-in details for reuse. The **Tạo Gmail & đăng nhập** action creates a unique Gmail-shaped local credential (it does not create a Google inbox), opens DreamFace in the visible profile, fills/submits the credentials, and pauses for CAPTCHA or other verification in the user's browser. CAPTCHA is never bypassed.
+- Import the website domain, username and password from installed Highlight/Longform settings, test the connection, and publish a generated News article automatically after render when the setting is enabled (or review it from Content first). Its verified public URL becomes the exact first comment for the matching video; website or LLM errors stay visible on the Content post with a one-click regeneration action. Website passwords are encrypted separately from workspace snapshots.
+- Optional Meta auto-post runs only after the website URL and first comment are confirmed, then publishes the matching Reel and its first comment to the bound Page. It remains off until enabled in Content settings and requires a local Page mapped to the Meta Page.
 - Settings include Store/website defaults and First Comment templates; Meta vault supports System User and Via Token with App ID/App Secret validation.
 - Settings now discovers OpenAI-compatible models automatically; Render has separate News/Product modes and a fast 480p draft action.
-- Research feed, AI video generation providers, timeline editing and Windows packaging. News graphics use the BBC label in the red straps and keep the source in the lower bar.
+- Page distribution now has a Content warehouse: completed videos create separate Content drafts, Page groups assign them round-robin, and scheduled posts are published by the local scheduler after Meta preflight. A group can automatically take new warehouse videos into its daily time slots, while any Page can also receive a post-now action. News batches can pin one DreamFace profile for the same MC, while each video receives a distinct visual variation.
+- Token pools now mirror the Highlight workflow: choose healthy Meta tokens, save a pool, then use **Tự chia Page** to assign verified Pages evenly by round-robin, least-recently-used or random strategy. Each pool records Page/token assignments, load counts and blocked Pages; a Page group can bind a token pool so daily warehouse automation uses the same assignment without asking again for every video.
+- News render accepts either a keyword or a direct article URL, then uses the article as the source for the presenter video and Content draft. The render panel keeps the main action small and offers News standard, Viral bold and Minimal font/style presets.
+- Research feed, AI video generation providers, timeline editing and Windows packaging. News graphics use a neutral US-news label, a red/yellow broadcast palette, readable condensed typography and keep the source in the lower bar.
 
 ## Run from source
 
@@ -48,6 +52,6 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Viral Studio project. The Windows v0.5.3 release is available from the [GitHub Releases page](https://github.com/minhpark89/dropship-studio/releases/tag/v0.5.3).
+This repository is the dedicated Viral Studio project. The current verified local build is v0.5.6. See [CHECKPOINT_v0.5.6.md](CHECKPOINT_v0.5.6.md) for the next-session handoff, validation commands and safe continuation rules.
 
 

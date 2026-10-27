@@ -54,6 +54,209 @@ function checkMedia(store, mediaIds, projectId) {
   return media;
 }
 
+function normalizeScheduleTimes(value) {
+  return [...new Set((Array.isArray(value) ? value : String(value || "").split(/[\s,;]+/))
+    .map((item) => String(item).trim())
+    .filter((item) => /^([01]\d|2[0-3]):[0-5]\d$/.test(item)))].slice(0, 24);
+}
+
+export function normalizeScheduleConfig(value, fallback = {}) {
+  const input = value && typeof value === "object" ? value : {};
+  const times = normalizeScheduleTimes(input.times ?? input.slots ?? fallback.times);
+  const staggerMinutes = Math.max(0, Math.min(1440, Number(input.staggerMinutes ?? input.stagger_minutes ?? fallback.staggerMinutes ?? 15) || 0));
+  const dailyLimitValue = Number(input.dailyLimit ?? input.postsPerDay ?? input.posts_per_day ?? fallback.dailyLimit ?? 0);
+  const dailyLimit = Number.isFinite(dailyLimitValue) ? Math.max(0, Math.min(200, Math.floor(dailyLimitValue))) : 0;
+  const enabled = input.enabled === true || input.autoPublish === true || fallback.enabled === true;
+  return {
+    times,
+    staggerMinutes,
+    dailyLimit,
+    enabled,
+    autoPublish: input.autoPublish === undefined ? enabled : input.autoPublish === true,
+    timezone: String(input.timezone || fallback.timezone || "Asia/Bangkok"),
+    tokenGroupId: String(input.tokenGroupId ?? input.token_group_id ?? fallback.tokenGroupId ?? ""),
+  };
+}
+
+export function syncMetaPages(store, requestedIds = []) {
+  const metaPages = Array.isArray(store.state.settings?.meta?.pages) ? store.state.settings.meta.pages : [];
+  const allowed = new Set((Array.isArray(requestedIds) ? requestedIds : []).map(String).filter(Boolean));
+  const selected = metaPages.filter((page) => !allowed.size || allowed.has(String(page.id)));
+  if (!selected.length) throw new StudioError("Chưa có Page Meta để tạo Page local.", "META_PAGES_EMPTY", 409);
+  const localByExternalId = new Map(store.state.socialPages.filter((page) => page.externalId).map((page) => [String(page.externalId), page]));
+  const created = [];
+  const updated = [];
+  for (const source of selected) {
+    const externalId = String(source.id || "").trim();
+    if (!/^\d{1,40}$/.test(externalId)) continue;
+    const next = {
+      name: String(source.name || externalId).slice(0, 120),
+      platform: "facebook",
+      externalId,
+      url: `https://www.facebook.com/${externalId}`,
+      timezone: "Asia/Bangkok",
+      notes: "Đồng bộ từ Meta · giữ local để gắn Content và lịch đăng.",
+      archived: false,
+      avatar: source.avatar || "",
+      metaPageId: externalId,
+      revision: 1,
+    };
+    const existing = localByExternalId.get(externalId);
+    if (existing) {
+      const changed = existing.name !== next.name || existing.url !== next.url || existing.avatar !== next.avatar || existing.archived;
+      if (changed) {
+        Object.assign(existing, next, { revision: Number(existing.revision || 1) + 1, updatedAt: now() });
+        updated.push(existing);
+      }
+      continue;
+    }
+    const page = store.add("socialPages", next);
+    created.push(page);
+    localByExternalId.set(externalId, page);
+  }
+  if (updated.length) store.save();
+  return { pages: [...created, ...updated], createdCount: created.length, updatedCount: updated.length, skippedCount: selected.length - created.length - updated.length };
+}
+
+function nextGroupScheduleStart(group, startAt, nowValue = Date.now()) {
+  if (startAt) {
+    const timestamp = Date.parse(startAt);
+    if (!Number.isFinite(timestamp) || timestamp <= nowValue) throw new StudioError("Thời gian bắt đầu phải ở tương lai.", "INVALID_SCHEDULE", 400);
+    return timestamp;
+  }
+  const times = normalizeScheduleTimes(group.scheduleConfig?.times);
+  if (!times.length) throw new StudioError("Nhóm chưa có khung giờ đăng. Hãy đặt giờ hoặc nhập thời gian bắt đầu.", "GROUP_SCHEDULE_REQUIRED", 409);
+  const current = new Date(nowValue);
+  const candidates = [];
+  for (const dayOffset of [0, 1, 2]) {
+    for (const time of times) {
+      const [hours, minutes] = time.split(":").map(Number);
+      const candidate = new Date(current);
+      candidate.setDate(current.getDate() + dayOffset);
+      candidate.setHours(hours, minutes, 0, 0);
+      if (candidate.getTime() > nowValue) candidates.push(candidate.getTime());
+    }
+  }
+  const result = Math.min(...candidates);
+  if (!Number.isFinite(result)) throw new StudioError("Không tìm được khung giờ tương lai của nhóm.", "GROUP_SCHEDULE_REQUIRED", 409);
+  return result;
+}
+
+export function schedulePostsForGroup(store, groupId, { postIds = [], startAt = null, staggerMinutes, tokenGroupId = "" } = {}) {
+  const group = (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === String(groupId));
+  if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
+  const pageIds = [...new Set((group.pageIds || []).map(String))];
+  if (!pageIds.length) throw new StudioError("Nhóm Page đang trống.", "GROUP_PAGES_EMPTY", 409);
+  const localPages = pageIds.map((id) => store.state.socialPages.find((page) => String(page.externalId) === id && !page.archived)).filter(Boolean);
+  if (localPages.length !== pageIds.length) throw new StudioError("Hãy đồng bộ Page local từ Meta trước khi xếp lịch nhóm.", "PAGE_MAPPING_REQUIRED", 409);
+  const ids = [...new Set((Array.isArray(postIds) ? postIds : []).map(String))];
+  if (!ids.length) throw new StudioError("Chọn ít nhất một video trong kho bài.", "POST_SELECTION_EMPTY", 422);
+  const posts = ids.map((id) => store.require("socialPosts", id));
+  const scheduleConfig = normalizeScheduleConfig(group.scheduleConfig);
+  const start = nextGroupScheduleStart({ ...group, scheduleConfig }, startAt, Date.now());
+  const spacing = Math.max(0, Math.min(1440, Number(staggerMinutes ?? scheduleConfig.staggerMinutes ?? 15) || 0));
+  const selectedTokenGroup = String(tokenGroupId || scheduleConfig.tokenGroupId || "");
+  if (selectedTokenGroup && !(store.state.settings?.meta?.tokenGroups || []).some((item) => item.id === selectedTokenGroup))
+    throw new StudioError("KhÃ´ng tÃ¬m tháº¥y pool token Ä‘Ã£ chá»n.", "META_TOKEN_GROUP_NOT_FOUND", 404);
+  if (selectedTokenGroup) {
+    group.scheduleConfig = normalizeScheduleConfig({ ...scheduleConfig, tokenGroupId: selectedTokenGroup }, scheduleConfig);
+  }
+  const scheduled = posts.map((post, index) => {
+    if (post.status === "published") throw new StudioError("Bài đã đăng không thể xếp lịch lại.", "IMMUTABLE_PUBLISHED", 409);
+    const page = localPages[index % localPages.length];
+    const changes = {
+      pageId: page.id,
+      pageGroupId: String(group.id),
+      ...(selectedTokenGroup ? { tokenGroupId: selectedTokenGroup } : {}),
+      status: "scheduled",
+      scheduledAt: new Date(start + index * spacing * 60_000).toISOString(),
+      automationStatus: null,
+      automationError: null,
+      automationAttempts: 0,
+      automationNextAttemptAt: null,
+    };
+    validatePostPayload(store, { ...post, ...changes }, { existing: post, reapprove: true });
+    return { post, page, changes };
+  });
+  for (const { post, changes } of scheduled) Object.assign(post, changes, { revision: Number(post.revision || 1) + 1, updatedAt: now() });
+  store.save();
+  return { group, scheduled: scheduled.map(({ post }) => post) };
+}
+
+function localScheduleKey(timestamp) {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function nextGroupSlots(group, used, count, nowValue = Date.now()) {
+  const config = normalizeScheduleConfig(group.scheduleConfig);
+  if (!config.times.length || !count) return [];
+  const current = new Date(nowValue);
+  const slots = [];
+  for (let dayOffset = 0; dayOffset < 31 && slots.length < count; dayOffset += 1) {
+    for (const time of config.times.slice().sort()) {
+      const [hours, minutes] = time.split(":").map(Number);
+      const candidate = new Date(current);
+      candidate.setDate(current.getDate() + dayOffset);
+      candidate.setHours(hours, minutes, 0, 0);
+      if (candidate.getTime() <= nowValue) continue;
+      const iso = candidate.toISOString();
+      if (used.has(iso)) continue;
+      used.add(iso);
+      slots.push(iso);
+    }
+  }
+  return slots;
+}
+
+export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId = "" } = {}) {
+  const group = (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === String(groupId));
+  if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
+  const config = normalizeScheduleConfig(group.scheduleConfig);
+  if (!config.enabled || !config.autoPublish || !config.times.length) return { group, scheduled: [] };
+  const pageIds = [...new Set((group.pageIds || []).map(String))];
+  const localPages = pageIds.map((id) => store.state.socialPages.find((page) => String(page.externalId) === id && !page.archived)).filter(Boolean);
+  if (localPages.length !== pageIds.length) return { group, scheduled: [] };
+  const dailyLimit = Math.max(1, Number(limit || config.dailyLimit || config.times.length) || config.times.length);
+  const today = localScheduleKey(Date.now());
+  const existingToday = (store.state.socialPosts || []).filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && localScheduleKey(post.scheduledAt) === today).length;
+  const capacity = Math.max(0, dailyLimit - existingToday);
+  if (!capacity) return { group, scheduled: [] };
+  const candidates = (store.state.socialPosts || [])
+    .filter((post) => ["draft", "ready"].includes(post.status) && !post.pageGroupId && post.mediaIds?.length && (post.automationSource === "render-warehouse" || post.automationSource === "warehouse-sync"))
+    .slice()
+    .sort((left, right) => new Date(left.createdAt || 0) - new Date(right.createdAt || 0))
+    .slice(0, capacity);
+  if (!candidates.length) return { group, scheduled: [] };
+  const used = new Set((store.state.socialPosts || []).filter((post) => post.pageGroupId === group.id && post.scheduledAt).map((post) => new Date(post.scheduledAt).toISOString()));
+  const slots = nextGroupSlots(group, used, candidates.length);
+  const selectedTokenGroup = String(tokenGroupId || config.tokenGroupId || "");
+  if (selectedTokenGroup && !(store.state.settings?.meta?.tokenGroups || []).some((item) => item.id === selectedTokenGroup))
+    throw new StudioError("Không tìm thấy pool token đã chọn.", "META_TOKEN_GROUP_NOT_FOUND", 404);
+  const scheduled = [];
+  for (let index = 0; index < candidates.length && index < slots.length; index += 1) {
+    const post = candidates[index];
+    const page = localPages[index % localPages.length];
+    const changes = {
+      pageId: page.id,
+      pageGroupId: String(group.id),
+      ...(selectedTokenGroup ? { tokenGroupId: selectedTokenGroup } : {}),
+      status: "scheduled",
+      scheduledAt: slots[index],
+      automationSource: "daily-automation",
+      automationStatus: null,
+      automationError: null,
+      automationAttempts: 0,
+      automationNextAttemptAt: null,
+    };
+    validatePostPayload(store, { ...post, ...changes }, { existing: post, reapprove: true });
+    Object.assign(post, changes, { revision: Number(post.revision || 1) + 1, updatedAt: now() });
+    scheduled.push(post);
+  }
+  if (scheduled.length) store.save();
+  return { group, scheduled };
+}
+
 export function validatePostPayload(store, payload, { existing = null, reapprove = false } = {}) {
   const projectId = payload.projectId ?? existing?.projectId;
   const pageId = payload.pageId ?? existing?.pageId;
@@ -104,6 +307,49 @@ export function mountSocialRoutes(app, store) {
     res.status(201).json(page);
   });
 
+  app.post("/api/social/pages/sync-meta", (req, res) => {
+    res.status(201).json(syncMetaPages(store, req.body?.pageIds || req.body?.page_ids || []));
+  });
+
+  app.post(["/api/social/groups/:id/schedule", "/api/social/page-groups/:id/schedule"], (req, res) => {
+    res.json(schedulePostsForGroup(store, req.params.id, req.body || {}));
+  });
+
+  app.post(["/api/social/groups/:id/automation", "/api/social/page-groups/:id/automation"], (req, res) => {
+    const group = (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === String(req.params.id));
+    if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
+    group.scheduleConfig = normalizeScheduleConfig(req.body?.scheduleConfig || req.body || {}, group.scheduleConfig || {});
+    group.updatedAt = now();
+    store.save();
+    res.json({ group });
+  });
+
+  app.post("/api/social/posts/:id/publish-now", (req, res) => {
+    const post = store.require("socialPosts", req.params.id);
+    const revision = z.number().int().positive().parse(req.body?.revision);
+    assertRevision(post, revision);
+    if (post.status === "published") throw new StudioError("Bài đã đăng không thể đăng lại.", "IMMUTABLE_PUBLISHED", 409);
+    const pageId = String(req.body?.pageId || post.pageId || "");
+    const page = pageId ? requirePage(store, pageId) : null;
+    if (!page) throw new StudioError("Chọn Page trước khi đăng ngay.", "PAGE_REQUIRED", 409);
+    checkPageActive(page, "scheduled");
+    const changes = {
+      pageId,
+      ...(req.body?.tokenGroupId ? { tokenGroupId: String(req.body.tokenGroupId) } : {}),
+      status: "scheduled",
+      scheduledAt: new Date(Date.now() + 3_000).toISOString(),
+      automationSource: "manual-now",
+      automationStatus: null,
+      automationError: null,
+      automationAttempts: 0,
+      automationNextAttemptAt: null,
+    };
+    validatePostPayload(store, { ...post, ...changes }, { existing: post, reapprove: true });
+    Object.assign(post, changes, { revision: revision + 1, updatedAt: now() });
+    store.save();
+    res.json(post);
+  });
+
   app.patch("/api/social/pages/:id", (req, res) => {
     const input = stripPatchDefaults(socialPagePatchSchema.parse(req.body), req.body);
     const page = requirePage(store, req.params.id);
@@ -140,7 +386,7 @@ export function mountSocialRoutes(app, store) {
     assertRevision(post, input.revision);
     if (post.status === "published") throw new StudioError("Bài đã ghi nhận đăng và không thể sửa.", "IMMUTABLE_PUBLISHED", 409);
     const { revision, ...changes } = input;
-    const contentChanged = ["caption", "articleBody", "researchId", "firstComment", "linkUrl", "linkLabel", "sourceUrl", "contentType", "mediaIds", "pageId", "title"].some((key) => changes[key] !== undefined && JSON.stringify(changes[key]) !== JSON.stringify(post[key]));
+    const contentChanged = ["caption", "articleBody", "researchId", "firstComment", "linkUrl", "linkLabel", "sourceUrl", "coverImageUrl", "contentType", "mediaIds", "pageId", "title"].some((key) => changes[key] !== undefined && JSON.stringify(changes[key]) !== JSON.stringify(post[key]));
     const explicitlyReapproved = contentChanged && (changes.status === "ready" || changes.status === "scheduled");
     if (contentChanged && !explicitlyReapproved) {
       changes.status = "draft";
@@ -179,6 +425,7 @@ export function mountSocialRoutes(app, store) {
       linkUrl: source.linkUrl || "",
       linkLabel: source.linkLabel || "",
       sourceUrl: source.sourceUrl || "",
+      coverImageUrl: source.coverImageUrl || "",
       articleBody: source.articleBody || "",
       researchId: source.researchId || null,
       mediaIds: [...source.mediaIds],
@@ -221,14 +468,17 @@ export function mountSocialRoutes(app, store) {
     const page = requirePage(store, post.pageId);
     if (page.archived) throw new StudioError("Page đã lưu trữ.", "ARCHIVED_PAGE", 409);
     if (!(post.status === "ready" || post.status === "scheduled")) throw new StudioError("Bài phải được duyệt trước khi ghi nhận đăng.", "PUBLICATION_NOT_READY", 409);
-    Object.assign(post, {
+    const published = {
+      ...post,
       status: "published",
       revision: input.revision + 1,
       publication: { source: "manual", externalPostId: input.externalPostId, permalink: input.permalink, publishedAt: input.publishedAt },
       updatedAt: now(),
-    });
+      removedFromQueue: true,
+    };
+    store.state.socialPosts = store.state.socialPosts.filter((item) => item.id !== post.id);
     store.save();
-    res.json(post);
+    res.json(published);
   });
 }
 

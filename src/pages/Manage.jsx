@@ -6,6 +6,8 @@ import {
   X,
   Download,
   ListVideo,
+  Newspaper,
+  ShoppingBag,
   ChevronDown,
   ExternalLink,
   CheckCircle2,
@@ -27,11 +29,19 @@ import { WebsiteSettings } from "./WebsiteSettings.jsx";
 
 export function QueuePage({ data, project, run, navigate }) {
   const [filter, setFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [expanded, setExpanded] = useState("");
+  const [locations, setLocations] = useState({});
+  const contentType = (job) => job.type === "news" || job.production?.contentType === "news"
+    ? "news"
+    : job.production?.contentType === "product"
+      ? "product"
+      : "other";
   const jobs = data.jobs
     .filter(
       (job) =>
         job.projectId === project.id &&
+        (typeFilter === "all" || contentType(job) === typeFilter) &&
         (filter === "all" ||
           (filter === "active"
             ? [
@@ -112,6 +122,11 @@ export function QueuePage({ data, project, run, navigate }) {
         </Notice>
       )}
       <div className="toolbar">
+        <div className="segmented queue-type-tabs">
+          {[['all', 'All videos'], ['news', 'News'], ['product', 'Product']].map(([value, label]) => (
+            <button key={value} className={typeFilter === value ? "selected" : ""} onClick={() => setTypeFilter(value)}>{label}</button>
+          ))}
+        </div>
         <div className="segmented">
           {[
             ["all", "Tất cả"],
@@ -134,6 +149,7 @@ export function QueuePage({ data, project, run, navigate }) {
       {jobs.length ? (
         <div className="job-list">
           {jobs.map((job) => {
+            const jobContentType = contentType(job);
             const account = data.accounts.find(
               (item) => item.id === (job.accountId || job.payload.accountId),
             );
@@ -156,7 +172,7 @@ export function QueuePage({ data, project, run, navigate }) {
               <article className="panel job-card" key={job.id}>
                 <div className="job-row">
                   <span className={`job-type ${job.type}`}>
-                    {job.type === "render" ? (
+                    {jobContentType === "news" ? <Newspaper size={22} /> : jobContentType === "product" ? <ShoppingBag size={22} /> : job.type === "render" ? (
                       <Cpu size={22} />
                     ) : (
                       <span
@@ -169,11 +185,17 @@ export function QueuePage({ data, project, run, navigate }) {
                   <div className="job-details">
                     <h3>{job.name}</h3>
                     <p>
-                      {job.type === "render"
-                        ? "FFmpeg · Xuất video cục bộ"
-                        : `${job.payload.model} · ${job.payload.ratio} · ${job.payload.duration}s`}
-                      {account && ` · ${account.name}`}
+                      {jobContentType === "news"
+                        ? `NEWS BROADCAST · ${job.production?.title || job.payload.newsPlan?.headline || "Research story"}`
+                        : jobContentType === "product"
+                          ? `PRODUCT VIDEO · ${job.payload.model || "DreamFace"} · ${job.payload.ratio || "9:16"}`
+                          : job.type === "render"
+                            ? "FFmpeg · Xuất video cục bộ"
+                            : `${job.payload.model || job.payload.provider || "AI"} · ${job.payload.ratio || ""} ${job.payload.duration ? `· ${job.payload.duration}s` : ""}`}
+                      {account ? ` · ${account.name}` : job.payload.accountId === "auto" && jobContentType !== "other" ? " · Auto profile pool" : ""}
                     </p>
+                    {jobContentType === "news" && job.production?.researchId && <small>Research → MC → editorial images → website article</small>}
+                    {job.type === "news" && job.contentAutomation && <small>Content: {({ generated: "Đã tạo bài", published: "Đã đăng website", social_published: "Đã đăng website + Meta", meta_error: "Lỗi Meta", website_error: "Lỗi website", error: "Lỗi tạo bài" }[job.contentAutomation] || job.contentAutomation)}</small>}
                     {waiting && job.type === "generate" && !available && (
                       <button
                         className="text-button warning-text"
@@ -194,6 +216,30 @@ export function QueuePage({ data, project, run, navigate }) {
                   <Badge status={job.status} />
                   <div className="inline-actions">
                     {output && (
+                      <>
+                      <a
+                        className="icon-button"
+                        title="Xem video"
+                        aria-label={`Xem video ${output.name}`}
+                        href={output.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Play size={17} />
+                      </a>
+                      {data.capabilities?.desktop && (
+                        <button
+                          className="icon-button"
+                          title="Mở thư mục chứa video"
+                          aria-label={`Mở thư mục chứa ${output.name}`}
+                          onClick={() => run(
+                            () => api("/desktop/reveal", { mediaId: output.id }),
+                            "Đã mở thư mục chứa video.",
+                          )}
+                        >
+                          <FolderOpen size={17} />
+                        </button>
+                      )}
                       <a
                         className="icon-button"
                         title="Tải kết quả"
@@ -201,6 +247,7 @@ export function QueuePage({ data, project, run, navigate }) {
                       >
                         <Download size={17} />
                       </a>
+                      </>
                     )}
                     {(waiting || running) && (
                       <button
@@ -219,6 +266,21 @@ export function QueuePage({ data, project, run, navigate }) {
                     {["failed", "cancelled", "interrupted"].includes(
                       job.status,
                     ) && (
+                      <>
+                        {job.type === "news" && job.status === "interrupted" && job.submittedAt && (
+                          <button
+                            className="icon-button"
+                            title="Khôi phục kết quả đã gửi"
+                            onClick={() =>
+                              run(
+                                () => api(`/jobs/${job.id}/recover`, {}),
+                                "Đã gửi yêu cầu khôi phục tại Creations, không gửi lại AI.",
+                              )
+                            }
+                          >
+                            <Download size={16} />
+                          </button>
+                        )}
                       <button
                         className="icon-button"
                         title="Thử lại"
@@ -241,6 +303,7 @@ export function QueuePage({ data, project, run, navigate }) {
                       >
                         <RefreshCw size={16} />
                       </button>
+                      </>
                     )}
                     <button
                       className="icon-button"
@@ -284,11 +347,34 @@ export function QueuePage({ data, project, run, navigate }) {
                     <span>{job.error}</span>
                   </div>
                 )}
+                {job.contentError && (
+                  <div className="job-error">
+                    <AlertCircle size={14} />
+                    <span>Content: {job.contentError}</span>
+                  </div>
+                )}
                 {job.warnings?.length > 0 && (
                   <Notice>{job.warnings.join(" ")}</Notice>
                 )}
                 {expanded === job.id && (
                   <div className="job-expanded">
+                    {output && (
+                      <div className="media-location">
+                        <small>Video đã lưu trên máy:</small>
+                        {locations[output.id] ? (
+                          <code>{locations[output.id].file}</code>
+                        ) : (
+                          <Button
+                            onClick={async () => {
+                              const location = await run(() => api(`/media/${output.id}/location`, undefined, "GET"));
+                              if (location) setLocations((current) => ({ ...current, [output.id]: location }));
+                            }}
+                          >
+                            Hiện đường dẫn file
+                          </Button>
+                        )}
+                      </div>
+                    )}
                     {job.payload.prompt && (
                       <p className="job-prompt">{job.payload.prompt}</p>
                     )}
@@ -808,6 +894,8 @@ export function SettingsPage({ data, project, run, notify }) {
           </div>
           <p className="muted small">Đặt link mặc định một lần. Khi tạo Content News/Product, app tự điền link, nhãn link và First Comment để bạn chỉ cần chọn video rồi duyệt.</p>
           <form onSubmit={saveContentSettings}>
+            <label className="toggle-field content-auto-publish-toggle"><input type="checkbox" checked={settings.content?.autoPublishNews !== false} onChange={(event) => updateContentSetting("autoPublishNews", event.target.checked)} /><span><strong>Auto publish News article after render</strong><small>When a connected website is configured, the article is published automatically and its exact public URL is written into the matching first comment.</small></span></label>
+            <label className="toggle-field content-auto-publish-toggle"><input type="checkbox" checked={settings.content?.autoPostNews === true} onChange={(event) => updateContentSetting("autoPostNews", event.target.checked)} /><span><strong>Auto post News to Meta after website</strong><small>After the article URL and first comment are ready, publish the matching Reel to the bound Meta Page. Requires a local Page mapped to that Meta Page.</small></span></label>
             <div className="form-grid">
               <Field label="Tên Store"><input value={settings.content?.storeName || ""} maxLength={160} placeholder="Ví dụ: Viral Shop" onChange={(event) => updateContentSetting("storeName", event.target.value)} /></Field>
               <Field label="URL Store"><input type="url" value={settings.content?.storeUrl || ""} placeholder="https://store.example.com" onChange={(event) => updateContentSetting("storeUrl", event.target.value)} /></Field>

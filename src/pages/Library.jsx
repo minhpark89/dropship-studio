@@ -9,6 +9,7 @@ import {
   Image,
   Music2,
   Newspaper,
+  FolderOpen,
 } from "lucide-react";
 import { api, bytes, timecode, clipFrom } from "../api.js";
 import { Button, Empty, MediaThumb, Modal, Uploader } from "../components.jsx";
@@ -195,6 +196,19 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
                     </button>
                   )}
                   <div className="inline-actions">
+                    {data.capabilities?.desktop && (
+                      <button
+                        className="icon-button"
+                        title="Mở thư mục chứa tệp"
+                        aria-label={`Mở thư mục chứa ${item.name}`}
+                        onClick={() => run(
+                          () => api("/desktop/reveal", { mediaId: item.id }),
+                          "Đã mở thư mục chứa tệp.",
+                        )}
+                      >
+                        <FolderOpen size={15} />
+                      </button>
+                    )}
                     <a
                       className="icon-button"
                       href={`${item.url}?download=1`}
@@ -250,6 +264,15 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
             )}
           </div>
           <div className="modal-actions">
+            {data.capabilities?.desktop && (
+              <Button onClick={() => run(
+                () => api("/desktop/reveal", { mediaId: preview.id }),
+                "Đã mở thư mục chứa tệp.",
+              )}>
+                <FolderOpen size={16} />
+                Mở thư mục
+              </Button>
+            )}
             <a href={`${preview.url}?download=1`} className="button">
               <Download size={16} />
               Tải về

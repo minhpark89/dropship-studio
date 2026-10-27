@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { generateImageEndpoint } from "../server/mc-image.js";
+import { generateImageEndpoint, ensureNewsMcImage } from "../server/mc-image.js";
+import { Store } from "../server/store.js";
 import { newsPlanSchema } from "../server/news-plan.js";
 
 test("AI MC image generation accepts the Highlight-compatible base64 response without leaking credentials", async () => {
@@ -27,11 +30,27 @@ test("AI MC image generation accepts the Highlight-compatible base64 response wi
   assert.equal(JSON.parse(request.options.body).model, "test-image");
 });
 
-test("news plans use BBC for the red broadcast label by default", () => {
+test("news plans use a neutral news label by default", () => {
   const plan = newsPlanSchema.parse({
     headline: "A verified news update",
     narration: "Officials confirmed a new development today as investigators review the available evidence and publish more details.",
     imageMediaIds: [randomUUID()],
   });
-  assert.equal(plan.brand, "BBC");
+  assert.equal(plan.brand, "NEWS UPDATE");
+});
+
+test("news batches reuse the saved MC still for later DreamFace videos", async (t) => {
+  const root = path.resolve(".verification", `mc-reuse-${randomUUID()}`);
+  const store = new Store(root);
+  const image = store.add("media", { kind: "image", file: "mc.png", projectId: null });
+  const account = store.add("accounts", {
+    name: "DreamFace reuse",
+    provider: "dreamface",
+    avatarMediaId: image.id,
+    avatarSource: "highlight-endpoint",
+  });
+  const job = { id: randomUUID(), payload: {} };
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const reused = await ensureNewsMcImage(store, {}, job, account, {}, new AbortController().signal);
+  assert.equal(reused.id, image.id);
 });

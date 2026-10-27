@@ -1,24 +1,87 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMetaClient, publicMeta, postPreflight } from "../server/meta.js";
+import { createHash } from "node:crypto";
+import { AVATAR_APPLY_POLICY, autoAssignTokenGroup, createMetaClient, publicMeta, postPreflight } from "../server/meta.js";
+
+test("bulk Page avatar updates use a serialized, batched Meta request policy", () => {
+  assert.equal(AVATAR_APPLY_POLICY.delayMs, 1000);
+  assert.equal(AVATAR_APPLY_POLICY.batchSize, 10);
+  assert.equal(AVATAR_APPLY_POLICY.batchPauseMs, 5000);
+});
+
+test("token pools automatically split verified Pages across healthy tokens", () => {
+  const tokenOne = "token-one-123456";
+  const tokenTwo = "token-two-123456";
+  const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
+  const meta = {
+    tokens: [
+      { id: "tok-1", token: tokenOne, status: "ACTIVE", totalCalls: 0 },
+      { id: "tok-2", token: tokenTwo, status: "ACTIVE", totalCalls: 0 },
+    ],
+    pages: ["p1", "p2", "p3", "p4"].map((id) => ({
+      id,
+      tokenBindings: {
+        "tok-1": { status: "VERIFIED", pageToken: `page-${id}-one`, verifiedPageId: id, credentialFingerprint: fingerprint(tokenOne) },
+        "tok-2": { status: "VERIFIED", pageToken: `page-${id}-two`, verifiedPageId: id, credentialFingerprint: fingerprint(tokenTwo) },
+      },
+    })),
+  };
+  const group = { id: "pool-1", tokenIds: ["tok-1", "tok-2"], pageIds: ["p1", "p2", "p3", "p4"] };
+  const result = autoAssignTokenGroup(meta, group, { strategy: "round_robin" });
+  assert.equal(result.assignedCount, 4);
+  assert.equal(result.blockedCount, 0);
+  assert.deepEqual(group.pageTokenBindings, { p1: "tok-1", p2: "tok-2", p3: "tok-1", p4: "tok-2" });
+  assert.deepEqual(result.loads, { "tok-1": 2, "tok-2": 2 });
+});
 
 test("Meta client uses the current Graph version and keeps token out of response data", async () => {
   const requests = [];
   const client = createMetaClient({
     fetchImpl: async (url, init) => {
       requests.push({ url: String(url), init });
-      return new Response(JSON.stringify({ id: "42", name: "Owner" }), { status: 200, headers: { "content-type": "application/json" } });
+      const payload = String(url).includes("me/accounts")
+        ? { data: [{ id: "9", name: "Page", picture: { data: { url: "https://cdn.example/page.png" } } }] }
+        : { id: "42", name: "Owner" };
+      return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
     },
   });
   const result = await client.me("user-token-123456");
   assert.equal(result.id, "42");
   assert.match(requests[0].url, /graph\.facebook\.com\/v26\.0\/me/);
   assert.match(requests[0].url, /access_token=user-token-123456/);
+  const pages = await client.pages("user-token-123456");
+  assert.match(requests[1].url, /me\/accounts/);
+  assert.match(requests[1].url, /picture(%7B|\{)url/);
+  assert.equal(pages.data[0].picture.data.url, "https://cdn.example/page.png");
   const view = publicMeta({ accessToken: "secret", graphVersion: "v26.0", user: { id: "42" }, pages: [{ id: "9", name: "Page", accessToken: "page-secret" }], boundPageId: "9", boundPageName: "Page" });
   assert.equal(view.connected, true);
   assert.equal(view.pages[0].hasToken, true);
   assert.equal("accessToken" in view.pages[0], false);
   assert.equal("accessToken" in view, false);
+  const avatarView = publicMeta({ pages: [{ id: "9", name: "Page", avatar: "/api/media/avatar/thumbnail", avatarMediaId: "media-1", avatarSource: "ai-meta", avatarStatus: "updated" }] });
+  assert.equal(avatarView.pages[0].avatar, "/api/media/avatar/thumbnail");
+  assert.equal(avatarView.pages[0].avatarMediaId, "media-1");
+  assert.equal(avatarView.pages[0].avatarStatus, "updated");
+});
+
+test("Meta client follows Page pagination so a token can load all managed Pages", async () => {
+  const requests = [];
+  const client = createMetaClient({
+    fetchImpl: async (url) => {
+      const value = String(url);
+      requests.push(value);
+      if (value.includes("page=2")) {
+        return new Response(JSON.stringify({ data: [{ id: "3", name: "Page 3" }] }), { status: 200 });
+      }
+      if (value.includes("me/accounts")) {
+        return new Response(JSON.stringify({ data: [{ id: "1", name: "Page 1" }, { id: "2", name: "Page 2" }], paging: { next: "https://graph.facebook.com/v26.0/me/accounts?page=2" } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ id: "42", name: "Owner" }), { status: 200 });
+    },
+  });
+  const result = await client.pages("user-token-123456");
+  assert.deepEqual(result.data.map((page) => page.id), ["1", "2", "3"]);
+  assert.equal(requests.length, 2);
 });
 
 test("Meta preflight blocks a local post without a matching bound Page and video", () => {
@@ -33,6 +96,28 @@ test("Meta preflight blocks a local post without a matching bound Page and video
   assert.equal(result.ready, false);
   assert.equal(result.checks.find((item) => item.key === "page_match").ok, false);
   assert.equal(result.checks.find((item) => item.key === "video").ok, false);
+  assert.equal(result.checks.find((item) => item.key === "first_comment").ok, false);
+});
+
+test("Meta News preflight requires the verified website URL in first comment", () => {
+  const store = {
+    state: {
+      socialPages: [{ id: "local", externalId: "123", name: "Page" }],
+      media: [{ id: "video", kind: "video", file: "C:/video.mp4" }],
+    },
+  };
+  const post = {
+    pageId: "local",
+    status: "ready",
+    caption: "caption",
+    mediaIds: ["video"],
+    contentType: "news",
+    website: { status: "published", url: "https://site.example/news/verified" },
+    firstComment: "Read this: https://site.example/news/old",
+  };
+  const result = postPreflight(store, post, { accessToken: "token", boundPageId: "123", boundPageToken: "page-token" });
+  assert.equal(result.ready, false);
+  assert.equal(result.checks.find((item) => item.key === "first_comment").ok, false);
 });
 
 test("Meta routes connect, redact tokens, and bind a Page", async () => {
@@ -193,7 +278,7 @@ test("Meta Reel publish is explicit and idempotent after preflight", async () =>
   const mediaFile = path.join(root, "sample.mp4");
   await fs.writeFile(mediaFile, Buffer.from("video-bytes"));
   const media = store.add("media", { projectId: project.id, name: "sample.mp4", kind: "video", file: mediaFile, thumbnail: null, previewFile: null, bytes: 11, width: 720, height: 1280, duration: 5, generated: false });
-  const post = store.add("socialPosts", { projectId: project.id, pageId: page.id, title: "Reel", caption: "Caption", mediaIds: [media.id], scheduledAt: null, status: "ready", notes: "", revision: 1 });
+  const post = store.add("socialPosts", { projectId: project.id, pageId: page.id, title: "Reel", caption: "Caption", firstComment: "Read the full article: https://news.example/story", mediaIds: [media.id], scheduledAt: null, status: "ready", notes: "", revision: 1 });
   const calls = [];
   const app = express();
   app.use(express.json());
@@ -203,6 +288,7 @@ test("Meta Reel publish is explicit and idempotent after preflight", async () =>
     startReel: async (input) => { calls.push(["start", input.pageId, input.fileSize]); return { video_id: "video-1", upload_url: "https://upload.test/chunk" }; },
     uploadChunk: async () => { calls.push(["upload"]); return {}; },
     finishReel: async () => { calls.push(["finish"]); return { id: "post-1" }; },
+    comment: async (input) => { calls.push(["comment", input.objectId, input.message]); return { id: "comment-1" }; },
   } });
   app.use((error, req, res, next) => res.status(error.status || 400).json({ code: error.code || "INVALID_REQUEST", error: error.message }));
   const server = await new Promise((resolve) => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
@@ -216,10 +302,72 @@ test("Meta Reel publish is explicit and idempotent after preflight", async () =>
     const firstBody = await first.json();
     assert.equal(firstBody.externalPostId, "post-1");
     assert.equal(firstBody.permalink, "https://www.facebook.com/post-1");
+    assert.equal(firstBody.firstCommentStatus, "published");
+    assert.equal(firstBody.removedFromQueue, true);
+    assert.equal(store.state.socialPosts.some((item) => item.id === post.id), false);
+    assert.equal(store.state.settings.meta.publications[0].externalPostId, "post-1");
     const second = await jsonRequest("/api/meta/publish/reel", { postId: post.id, idempotencyKey: "publish-test-123" });
     assert.equal(second.status, 200);
     assert.deepEqual(await second.json(), firstBody);
-    assert.deepEqual(calls.map((item) => item[0]), ["start", "upload", "finish"]);
+    assert.deepEqual(calls.map((item) => item[0]), ["start", "upload", "finish", "comment"]);
+    assert.deepEqual(calls[3], ["comment", "post-1", "Read the full article: https://news.example/story"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Meta keeps a Reel in the queue when first comment fails and retries only the comment", async () => {
+  const { default: express } = await import("express");
+  const { Store } = await import("../server/store.js");
+  const { mountMetaRoutes } = await import("../server/meta.js");
+  const { default: fs } = await import("node:fs/promises");
+  const { default: path } = await import("node:path");
+  const { randomUUID } = await import("node:crypto");
+  const root = path.resolve(".verification", `meta-comment-error-${randomUUID()}`);
+  await fs.mkdir(root, { recursive: true });
+  const store = new Store(root);
+  const project = store.createProject("Comment QA");
+  const page = store.add("socialPages", { name: "Page", platform: "facebook", externalId: "321", url: "https://www.facebook.com/page", timezone: "Asia/Bangkok", notes: "", archived: false });
+  const mediaFile = path.join(root, "sample.mp4");
+  await fs.writeFile(mediaFile, Buffer.from("video-bytes"));
+  const media = store.add("media", { projectId: project.id, name: "sample.mp4", kind: "video", file: mediaFile, thumbnail: null, previewFile: null, bytes: 11, width: 720, height: 1280, duration: 5, generated: false });
+  const post = store.add("socialPosts", { projectId: project.id, pageId: page.id, title: "Reel", caption: "Caption", firstComment: "Read the full article: https://news.example/story", mediaIds: [media.id], scheduledAt: null, status: "ready", notes: "", revision: 1 });
+  const calls = [];
+  let commentAttempts = 0;
+  const app = express();
+  app.use(express.json());
+  mountMetaRoutes(app, store, { client: {
+    me: async () => ({ id: "42", name: "Owner" }),
+    pages: async () => ({ data: [{ id: "321", name: "Page", access_token: "page-token" }] }),
+    startReel: async () => { calls.push("start"); return { video_id: "video-1", upload_url: "https://upload.test/chunk" }; },
+    uploadChunk: async () => { calls.push("upload"); return {}; },
+    finishReel: async () => { calls.push("finish"); return { id: "post-1" }; },
+    comment: async () => { commentAttempts += 1; calls.push("comment"); if (commentAttempts === 1) throw new Error("Graph comment failed"); return { id: "comment-1" }; },
+  } });
+  app.use((error, req, res, next) => res.status(error.status || 400).json({ code: error.code || "INVALID_REQUEST", error: error.message }));
+  const server = await new Promise((resolve) => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const jsonRequest = (url, body) => fetch(`${base}${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await jsonRequest("/api/meta/connect", { accessToken: "user-token-123456" })).status, 200);
+    assert.equal((await jsonRequest("/api/meta/bind", { pageId: "321" })).status, 200);
+    const first = await jsonRequest("/api/meta/publish/reel", { postId: post.id, idempotencyKey: "comment-retry-123" });
+    assert.equal(first.status, 200);
+    const firstBody = await first.json();
+    assert.equal(firstBody.status, "published_comment_error");
+    assert.equal(firstBody.removedFromQueue, false);
+    assert.equal(firstBody.firstCommentError, "Graph comment failed");
+    assert.equal(store.state.socialPosts.some((item) => item.id === post.id), true);
+    assert.equal(store.state.socialPosts[0].automationError, "Graph comment failed");
+    const second = await jsonRequest("/api/meta/publish/reel", { postId: post.id, idempotencyKey: "comment-retry-123" });
+    assert.equal(second.status, 200);
+    const secondBody = await second.json();
+    assert.equal(secondBody.status, "published");
+    assert.equal(secondBody.firstCommentStatus, "published");
+    assert.equal(secondBody.removedFromQueue, true);
+    assert.equal(store.state.socialPosts.some((item) => item.id === post.id), false);
+    assert.deepEqual(calls, ["start", "upload", "finish", "comment", "comment"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await fs.rm(root, { recursive: true, force: true });

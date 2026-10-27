@@ -6,7 +6,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store } from "../server/store.js";
-import { mountSocialRoutes } from "../server/social.js";
+import { autoScheduleWarehousePosts, mountSocialRoutes } from "../server/social.js";
 
 const roots = [];
 const servers = [];
@@ -135,13 +135,78 @@ test("scheduled dates, publication, and duplicate semantics are explicit", async
   const invalid = await request(`/api/social/posts/${post.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: post.revision, status: "scheduled", scheduledAt: "2020-01-01T00:00:00Z" }) });
   assert.equal(invalid.status, 400);
   const ready = await json(await request(`/api/social/posts/${post.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: post.revision, status: "ready" }) }));
+  const duplicate = await request(`/api/social/posts/${post.id}/duplicate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: ready.revision }) });
+  assert.equal(duplicate.status, 201);
+  assert.equal((await json(duplicate)).status, "draft");
   const published = await json(await request(`/api/social/posts/${post.id}/publication`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: ready.revision, externalPostId: "manual_123", permalink: "https://facebook.com/demo/posts/1", publishedAt: new Date().toISOString() }) }));
   assert.equal(published.status, "published");
   assert.equal(published.publication.source, "manual");
-  const edit = await request(`/api/social/posts/${post.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: published.revision, caption: "edit" }) });
-  assert.equal(edit.status, 409);
-  const duplicate = await request(`/api/social/posts/${post.id}/duplicate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: published.revision }) });
-  assert.equal(duplicate.status, 201);
-  assert.equal((await json(duplicate)).status, "draft");
+  assert.equal(published.removedFromQueue, true);
+  assert.equal((await json(await request("/api/social"))).posts.some((item) => item.id === post.id), false);
+});
+
+test("Meta Pages sync into local channels and a Page group schedules warehouse posts", async () => {
+  const { request, store, project, media } = await fixture();
+  store.state.settings.meta = {
+    pages: [
+      { id: "111111", name: "First Page", avatar: "https://example.test/first.jpg" },
+      { id: "222222", name: "Second Page", avatar: "https://example.test/second.jpg" },
+    ],
+    pageGroups: [{ id: "group_alpha", name: "Alpha group", pageIds: ["111111", "222222"], scheduleConfig: { times: ["23:59"], staggerMinutes: 10 } }],
+    tokenGroups: [],
+  };
+  store.save();
+  const synced = await json(await request("/api/social/pages/sync-meta", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) }));
+  assert.equal(synced.createdCount, 2);
+  const localPages = store.state.socialPages;
+  const postA = await json(await request("/api/social/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, title: "Warehouse A", caption: "A", mediaIds: [media.id] }) }));
+  const postB = await json(await request("/api/social/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, title: "Warehouse B", caption: "B", mediaIds: [media.id] }) }));
+  const startAt = new Date(Date.now() + 120_000).toISOString();
+  const scheduled = await json(await request("/api/social/groups/group_alpha/schedule", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ postIds: [postA.id, postB.id], startAt, staggerMinutes: 10 }) }));
+  assert.equal(scheduled.scheduled.length, 2);
+  assert.deepEqual(scheduled.scheduled.map((post) => post.pageId), localPages.map((page) => page.id));
+  assert.ok(scheduled.scheduled.every((post) => post.status === "scheduled" && post.pageGroupId === "group_alpha"));
+  assert.equal(Date.parse(scheduled.scheduled[1].scheduledAt) - Date.parse(scheduled.scheduled[0].scheduledAt), 600_000);
+});
+
+test("an enabled Page group automatically takes warehouse drafts into its daily slots", async () => {
+  const { store, project, media } = await fixture();
+  const page = store.add("socialPages", { name: "Automation Page", platform: "facebook", externalId: "333333", url: "https://facebook.com/automation", timezone: "Asia/Bangkok", notes: "", archived: false, revision: 1 });
+  const now = new Date(Date.now() + 120_000);
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const group = { id: "group_daily", name: "Daily", pageIds: [page.externalId], scheduleConfig: { times: [time], staggerMinutes: 0, dailyLimit: 1, enabled: true, autoPublish: true, tokenGroupId: "pool_daily" } };
+  store.state.settings.meta.pageGroups = [group];
+  store.state.settings.meta.tokenGroups = [{ id: "pool_daily", name: "Daily pool", tokenIds: ["token-1"] }];
+  const post = store.add("socialPosts", {
+    projectId: project.id,
+    pageId: "",
+    pageGroupId: "",
+    contentType: "news",
+    title: "Warehouse draft",
+    caption: "Ready for the daily Page slot.",
+    firstComment: "",
+    linkUrl: "",
+    linkLabel: "",
+    sourceUrl: "",
+    coverImageUrl: "",
+    articleBody: "",
+    researchId: null,
+    mediaIds: [media.id],
+    scheduledAt: null,
+    status: "draft",
+    notes: "",
+    revision: 1,
+    automationSource: "render-warehouse",
+  });
+  store.save();
+  const result = autoScheduleWarehousePosts(store, group.id);
+  assert.equal(result.scheduled.length, 1);
+  assert.equal(result.scheduled[0].id, post.id);
+  assert.equal(post.status, "scheduled");
+  assert.equal(post.pageId, page.id);
+  assert.equal(post.pageGroupId, group.id);
+  assert.equal(post.tokenGroupId, "pool_daily");
+  assert.equal(post.automationSource, "daily-automation");
+  assert.ok(Date.parse(post.scheduledAt) > Date.now());
 });
 

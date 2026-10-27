@@ -1075,15 +1075,20 @@ nav button b {
 }
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   margin-top: 17px;
 }
+.card-actions .button {
+  min-width: 0;
+}
 .card-actions .button:first-child {
-  flex: 1;
+  flex: 1 1 150px;
 }
 .account-footer {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 17px;
   border-top: 1px solid #2c392e;
   margin-top: 16px;
@@ -1539,6 +1544,10 @@ nav button b {
   flex-direction: column;
   gap: 12px;
 }
+.queue-type-tabs { margin-right: auto; }
+.queue-type-tabs button { color: #b6c9a7; }
+.job-details p { overflow-wrap: anywhere; }
+.job-details > small { display: block; color: #7e9b72; }
 .job-card {
   padding: 19px 21px;
 }
@@ -1637,6 +1646,27 @@ nav button b {
 .job-expanded > .button {
   margin: 15px 0 5px;
 }
+.media-location {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #11190f;
+}
+.media-location small {
+  color: #b6c9a7;
+}
+.media-location code {
+  color: #d7e5cb;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+.media-location .button {
+  width: fit-content;
+  margin: 0;
+}
 .job-logs {
   margin-top: 15px;
   max-height: 230px;
@@ -1651,6 +1681,43 @@ nav button b {
 .job-logs time {
   color: #657b57;
   flex-shrink: 0;
+}
+.workspace-split-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 11px 14px;
+  border: 1px solid #354d38;
+  border-radius: 10px;
+  color: #9fba9a;
+  background: #152216;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.workspace-split-note strong { color: #d4efa8; font-size: 10px; letter-spacing: .11em; white-space: nowrap; }
+.workspace-split-note span { flex: 1; }
+.workspace-split-note button { border: 0; color: #d4efa8; background: transparent; font: inherit; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.content-automation-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 11px 12px;
+  color: #e5b2a6;
+  border: 1px solid #70463f;
+  border-radius: 8px;
+  background: #3b2020;
+  font-size: 11px;
+}
+.content-automation-error span { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.content-automation-error strong { color: #ffd1bf; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.research-results-heading-actions { display: flex; align-items: center; gap: 10px; }
+@media (max-width: 720px) {
+  .workspace-split-note, .content-automation-error { align-items: flex-start; flex-direction: column; }
+  .research-results-heading-actions { align-items: flex-end; flex-direction: column; }
+  .queue-type-tabs { margin-right: 0; }
 }
 .settings-grid {
   display: grid;
@@ -2476,6 +2543,23 @@ nav button b {
   .account-explainer {
     padding: 15px;
     gap: 10px;
+  }
+  .account-card .card-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .account-card .card-actions .button:first-child {
+    grid-column: 1 / -1;
+    width: 100%;
+    flex: none;
+  }
+  .account-card .card-actions .button {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+    white-space: normal;
+    justify-content: center;
   }
   .dreamface-pool {
     grid-template-columns: 1fr;

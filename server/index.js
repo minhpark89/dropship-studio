@@ -22,12 +22,13 @@ import { mountSocialRoutes } from "./social.js";
 import { mountResearchRoutes } from "./research.js";
 import { mountMetaRoutes } from "./meta.js";
 import { createDreamFaceProvider } from "./providers/dreamface.js";
-import { createDreamFaceSlots, saveDreamFaceCredentials } from "./dreamface-accounts.js";
+import { createDreamFaceSlots, ensureDreamFaceCredentials, normalizeProxy, saveDreamFaceCredentials } from "./dreamface-accounts.js";
 import { SecretStore } from "./secret-store.js";
 import { mountProductionRoutes } from "./production.js";
 import { mountContentRoutes } from "./content.js";
 import { mountWebsiteRoutes } from "./website.js";
 import { inspectMcImageSettings } from "./mc-image.js";
+import { SocialScheduler } from "./social-scheduler.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
@@ -78,7 +79,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://upload.wikimedia.org https://thumb.wikimedia.org https://commons.wikimedia.org https://ichef.bbci.co.uk data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://upload.wikimedia.org https://thumb.wikimedia.org https://commons.wikimedia.org https://ichef.bbci.co.uk https://*.fbcdn.net https://*.facebook.com data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
     );
     next();
   });
@@ -148,11 +149,55 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
   });
 
   mountSocialRoutes(app, store);
-  mountContentRoutes(app, store);
-  mountWebsiteRoutes(app, store);
+  const contentService = mountContentRoutes(app, store);
+  const websiteService = mountWebsiteRoutes(app, store);
+  const metaService = mountMetaRoutes(app, store);
+  queue.setNewsAutomation(async ({ job, media }) => {
+    const existing = store.state.socialPosts.find(post => post.mediaIds?.includes(media.id));
+    const post = await contentService.createContentFromMedia(media.id, {
+      source: "news-render",
+      force: Boolean(existing?.automationSource === "news-render" && existing?.automationError),
+    });
+    if (post.contentType !== "news") return { postId: post.id, status: "generated" };
+    if (post.automationError) return { postId: post.id, status: "error", error: post.automationError };
+    if (store.state.settings.content?.autoPublishNews === false) return { postId: post.id, status: "generated" };
+    try {
+      const published = await websiteService.publish(post.id, { revision: post.revision });
+      if (store.state.settings.content?.autoPostNews !== true) {
+        store.patch("socialPosts", published.id, { automationStatus: "published", automationError: null });
+        return { postId: published.id, status: "published" };
+      }
+      try {
+        const publication = await metaService.autoPublishNews(published.id);
+        if (publication.firstCommentError) {
+          store.patch("socialPosts", published.id, { automationStatus: "meta_error", automationError: publication.firstCommentError });
+          return { postId: published.id, status: "meta_error", error: publication.firstCommentError };
+        }
+        return { postId: published.id, status: "social_published", publication };
+      } catch (error) {
+        store.patch("socialPosts", published.id, { automationStatus: "meta_error", automationError: error.message });
+        return { postId: published.id, status: "meta_error", error: error.message };
+      }
+    } catch (error) {
+      store.patch("socialPosts", post.id, { automationStatus: "website_error", automationError: error.message });
+      return { postId: post.id, status: "website_error", error: error.message };
+    }
+  });
+  queue.setVideoAutomation(async ({ media }) => {
+    const existing = store.state.socialPosts.find((post) => post.mediaIds?.includes(media.id));
+    const post = await contentService.createContentFromMedia(media.id, {
+      source: "render-warehouse",
+      force: Boolean(existing?.automationSource === "render-warehouse" && existing?.automationError),
+    });
+    return {
+      postId: post.id,
+      status: post.automationError ? "warehouse_error" : "warehouse_ready",
+      error: post.automationError || null,
+    };
+  });
+  const socialScheduler = new SocialScheduler(store, metaService.publishReel);
   mountResearchRoutes(app, store, { queue });
   const production = mountProductionRoutes(app, store, queue);
-  mountMetaRoutes(app, store);
 
   const checkAccount = async (id) => {
     const account = store.require("accounts", id);
@@ -251,6 +296,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
             projectId: req.body.projectId || undefined,
             name,
             move: true,
+            mediaType: "product",
           });
           results.push({ ok: true, id: media.id, name: media.name });
         } catch (error) {
@@ -274,6 +320,10 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     const media = store.require("media", req.params.id);
     if (!media.thumbnail) return res.sendStatus(404);
     res.sendFile(media.thumbnail, { dotfiles: "allow" });
+  });
+  app.get("/api/media/:id/location", (req, res) => {
+    const media = store.require("media", req.params.id);
+    res.json({ file: media.file, directory: path.dirname(media.file), name: media.name });
   });
   app.delete("/api/media/:id", (req, res) => {
     const media = store.require("media", req.params.id);
@@ -309,27 +359,10 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     const data = accountSchema.parse(req.body);
     if (data.provider === "flow" && data.loginMethod === "apple")
       throw new StudioError("Google Flow dùng tài khoản Google hoặc cookie.");
-    if (data.proxy) {
-      let proxy;
-      try {
-        proxy = new URL(
-          data.proxy.includes("://") ? data.proxy : `http://${data.proxy}`,
-        );
-      } catch {
-        throw new StudioError("Địa chỉ proxy không hợp lệ.");
-      }
-      if (
-        !["http:", "https:", "socks5:"].includes(proxy.protocol) ||
-        proxy.username ||
-        proxy.password
-      )
-        throw new StudioError(
-          "Proxy hỗ trợ HTTP/HTTPS/SOCKS5 không chứa mật khẩu.",
-        );
-    }
     res.status(201).json(
       store.add("accounts", {
         ...data,
+        proxy: normalizeProxy(data.proxy),
         status: "offline",
         message: "Chưa kiểm tra phiên đăng nhập.",
       }),
@@ -340,9 +373,67 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       provider: z.literal("dreamface").default("dreamface"),
       count: z.number().int().min(1).max(100),
       namePrefix: z.string().trim().min(1).max(80).default("DreamFace slot"),
+      proxy: z.string().trim().max(500).default(""),
+      proxies: z.array(z.string().trim().max(500)).max(100).default([]),
     }).parse(req.body || {});
     const accounts = createDreamFaceSlots(store,input);
     res.status(201).json({ accounts, created: accounts.length });
+  });
+  app.patch("/api/accounts/:id", async (req, res) => {
+    const account = store.require("accounts", req.params.id);
+    const input = z.object({ proxy: z.string().trim().max(500).default("") }).parse(req.body || {});
+    if (["busy", "checking"].includes(account.status))
+      throw new StudioError("Hồ sơ đang được sử dụng. Chờ tác vụ hiện tại kết thúc trước khi đổi proxy.", "PROFILE_BUSY", 409);
+    if (account.provider !== "dreamface" && browsers.profileAccounts(account).length > 1)
+      throw new StudioError("Hồ sơ Google đang dùng chung. Đổi proxy riêng sẽ làm lệch các tài khoản liên kết.", "SHARED_PROFILE", 409);
+    const proxy = normalizeProxy(input.proxy);
+    if (proxy === (account.proxy || "")) return res.json(account);
+    if (account.provider === "dreamface") await dreamface.close(account);
+    else await browsers.close(account.id);
+    res.json(store.patch("accounts", account.id, {
+      proxy,
+      status: account.status === "ready" ? "offline" : account.status,
+      message: proxy ? "Proxy đã lưu. Hãy kiểm tra phiên trước khi render." : "Đã bỏ proxy. Hãy kiểm tra phiên trước khi render.",
+    }));
+  });
+  app.post("/api/accounts/:id/gmail-signup", async (req, res) => {
+    const account = store.require("accounts", req.params.id);
+    if (account.provider !== "dreamface")
+      throw new StudioError("Luồng tự điền email chỉ dành cho profile DreamFace.", "GMAIL_DREAMFACE_ONLY", 409);
+    if (["busy", "checking"].includes(account.status))
+      throw new StudioError("Profile đang được sử dụng. Chờ tác vụ hiện tại kết thúc trước khi mở DreamFace.", "PROFILE_BUSY", 409);
+    const input = z.object({
+      action: z.enum(["start", "check"]).default("start"),
+      firstName: z.string().trim().max(80).default(""),
+      lastName: z.string().trim().max(80).default(""),
+    }).parse(req.body || {});
+    const credentials = ensureDreamFaceCredentials(store, account);
+    store.patch("accounts", account.id, {
+      gmailStatus: input.action === "start" ? "opening" : (account.gmailStatus || "pending"),
+      gmailAuthStep: "browser",
+      message: "Opening DreamFace in this profile Chrome window...",
+    });
+    try {
+      const result = input.action === "check"
+        ? await dreamface.checkDreamFaceSignup(account)
+        : await dreamface.startDreamFaceSignup(account, credentials);
+      const updated = store.patch("accounts", account.id, {
+        status: ["ready", "verification", "needs_login"].includes(result.status) ? result.status : account.status,
+        gmailStatus: result.status,
+        gmailAuthStep: result.authStep || "",
+        gmailCheckedAt: new Date().toISOString(),
+        message: result.message,
+      });
+      res.json({ ...result, email: credentials.email, account: updated });
+    } catch (error) {
+      store.patch("accounts", account.id, {
+        status: "needs_login",
+        gmailStatus: "failed",
+        gmailAuthStep: "error",
+        message: error.message,
+      });
+      throw error;
+    }
   });
   app.post("/api/accounts/:id/check", async (req, res) =>
     res.json(await checkAccount(req.params.id)),
@@ -415,6 +506,23 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
   app.post("/api/jobs/:id/retry", (req, res) =>
     res.json(queue.retry(req.params.id, req.body.confirmResubmit === true)),
   );
+  app.post("/api/jobs/:id/recover", async (req, res) => {
+    const job = store.require("jobs", req.params.id);
+    const accounts = store.state.accounts.filter((account) =>
+      account.provider === "dreamface" && ["ready", "offline"].includes(account.status),
+    );
+    // A restart intentionally marks a busy profile offline. Re-check the
+    // saved DreamFace profiles before recovery so the queue can use the same
+    // authenticated session without creating another provider task.
+    await Promise.allSettled(accounts.map(async (account) => {
+      if (account.status === "ready") return;
+      try {
+        const result = await dreamface.check(account);
+        store.patch("accounts", account.id, result);
+      } catch {}
+    }));
+    res.json(queue.recoverSubmitted(job.id));
+  });
   app.patch("/api/settings", (req, res) => {
     const httpUrl = (value) => String(value || "").trim() === "" || /^https?:\/\/[^\s]+$/i.test(String(value));
     const input = z
@@ -444,6 +552,8 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
           articleLinkLabel: z.string().trim().max(160).optional(),
           productFirstCommentTemplate: z.string().max(10000).optional(),
           newsFirstCommentTemplate: z.string().max(10000).optional(),
+          autoPublishNews: z.boolean().optional(),
+          autoPostNews: z.boolean().optional(),
         }).optional(),
       })
       .parse(req.body);
@@ -504,6 +614,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       listening.once("error", reject);
     });
   } catch (error) {
+    await socialScheduler.close();
     await queue.close();
     throw error;
   }
@@ -513,6 +624,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     try {
       for (const stream of streams) stream.end();
       clearTimeout(changeTimer);
+      await socialScheduler.close();
       await production.close();
       await queue.close();
       await browsers.closeAll();
@@ -526,7 +638,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       instance.release();
     }
   };
-  return { app, server, store, browsers, queue, address, close };
+  return { app, server, store, browsers, queue, socialScheduler, address, close };
 }
 
 if (

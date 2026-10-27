@@ -142,7 +142,7 @@ try {
   const env = { ...process.env, STUDIO_DATA_DIR: root };
   delete env.ELECTRON_RUN_AS_NODE;
   application = await electron.launch({
-    executablePath: path.resolve("release/win-unpacked/Dropship Studio.exe"),
+    executablePath: path.resolve("release/win-unpacked/Viral Studio.exe"),
     args: [`--user-data-dir=${path.join(root, "electron-profile")}`],
     env,
     timeout: 60000,

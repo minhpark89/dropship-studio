@@ -13,6 +13,7 @@ import { StudioError } from "./store.js";
 import { importMedia } from "./media.js";
 import { downloadImageAsset, searchImageQueries, newsImageCandidates } from "./image-search.js";
 import { buildResearchAssemblyTimeline } from "../shared/research-assembly.js";
+import { normalizeLlmEndpoint } from "./llm.js";
 import { readChatCompletion } from "./llm-response.js";
 
 const DEFAULT_FEEDS = [
@@ -198,8 +199,7 @@ async function fetchFeeds(feeds, fetchImpl, warnings) {
 }
 
 function endpointUrl(endpoint) {
-  const normalized = endpoint.replace(/\/+$/, "");
-  return /\/chat\/completions$/i.test(normalized) ? normalized : `${normalized}/chat/completions`;
+  return `${normalizeLlmEndpoint(endpoint)}/chat/completions`;
 }
 
 function parseModelContent(content) {
@@ -281,7 +281,7 @@ function publicLlmSettings(settings) {
 }
 
 function llmModelsUrl(endpoint) {
-  const base = new URL(endpoint);
+  const base = new URL(normalizeLlmEndpoint(endpoint));
   if (!["http:", "https:"].includes(base.protocol) || base.username || base.password)
     throw new StudioError("Endpoint LLM phải là URL HTTP/HTTPS hợp lệ.", "INVALID_LLM_ENDPOINT");
   base.search = "";
@@ -417,7 +417,8 @@ export function mountResearchRoutes(app, store, options = {}) {
     const body = req.body || {};
     const current = llmSettingsSchema.parse(store.state.settings?.llm || {});
     const submittedKey = body.apiKey === "[đã lưu]" ? current.apiKey : body.apiKey;
-    const next = llmSettingsSchema.parse({ ...current, ...body, apiKey: submittedKey === undefined ? current.apiKey : submittedKey });
+    const normalizedBody = body.endpoint ? { ...body, endpoint: normalizeLlmEndpoint(body.endpoint) } : body;
+    const next = llmSettingsSchema.parse({ ...current, ...normalizedBody, apiKey: submittedKey === undefined ? current.apiKey : submittedKey });
     store.state.settings.llm = next;
     store.save();
     res.json(publicLlmSettings(next));
@@ -572,6 +573,7 @@ export function mountResearchRoutes(app, store, options = {}) {
           projectId: result.projectId,
           name: `${article.title.slice(0, 80)}${extension}`,
           move: true,
+          mediaType: "news-editorial",
         });
         imported.push({ articleId: article.id, mediaId: media.id });
       } finally {

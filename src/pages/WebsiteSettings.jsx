@@ -16,7 +16,7 @@ export function WebsiteSettings({settings = {},notify}) {
   const test=()=>act("test",async()=>{const result=await api("/website/test",{id:draft.id});setMessage(result.message);notify(result.message);});
   return <section className="panel settings-website-panel">
     <div className="panel-heading"><h3><Globe2 size={18}/> Website publishing</h3></div>
-    <p className="muted small">Connect your own news website. Publish a reviewed article from Content; its exact URL is then placed in the first comment.</p>
+    <p className="muted small">Connect your own news website. News Broadcast can publish the generated article after rendering; its exact public URL is then placed in the matching first comment. Content still keeps the draft and any error for review.</p>
     <div className="hub-heading-actions"><Button type="button" onClick={()=>importSite("highlight")} busy={busy==="highlight"}><Download size={14}/> Import Highlight</Button><Button type="button" onClick={()=>importSite("longform")} busy={busy==="longform"}><Download size={14}/> Import Longform</Button></div>
     {sites.length>0 && <Field label="Active news website"><select value={settings.activeId || ""} onChange={event=>selectSite(event.target.value)}>{sites.map(site=><option key={site.id} value={site.id}>{site.name} · {site.baseUrl}</option>)}</select></Field>}
     <form onSubmit={save}>

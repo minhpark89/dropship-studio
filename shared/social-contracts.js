@@ -65,6 +65,7 @@ export const socialPostSchema = z.object({
   linkUrl: webLink.default(""),
   linkLabel: text(160).default(""),
   sourceUrl: webLink.default(""),
+  coverImageUrl: webLink.default(""),
   articleBody: text(60000).default(""),
   researchId: uuid.nullable().default(null),
   mediaIds: z.array(uuid).max(1).default([]),

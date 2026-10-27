@@ -3,21 +3,30 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const packaged = process.argv.includes('--packaged');
 const output = path.resolve('.verification', packaged ? 'desktop-packaged' : 'desktop');
 await fs.mkdir(output, { recursive: true });
 const env = { ...process.env, STUDIO_DATA_DIR: path.join(output, `data-${randomUUID()}`) };
 delete env.ELECTRON_RUN_AS_NODE;
+const electronProfile = path.join(output, `electron-${randomUUID()}`);
 const application = await electron.launch({
-  executablePath: path.resolve(packaged ? 'release/win-unpacked/Dropship Studio.exe' : 'node_modules/electron/dist/electron.exe'),
-  args: packaged ? [] : [path.resolve('desktop/main.cjs')],
+  executablePath: path.resolve(packaged ? 'release/win-unpacked/Viral Studio.exe' : 'node_modules/electron/dist/electron.exe'),
+  args: packaged ? [`--user-data-dir=${electronProfile}`] : [path.resolve('desktop/main.cjs')],
   env,
   timeout: 60000,
 });
 const errors = [];
 try {
-  const page = await application.firstWindow();
+  let page;
+  const windowDeadline = Date.now() + 60000;
+  while (Date.now() < windowDeadline) {
+    page = application.windows().find((candidate) => candidate.url().startsWith('http://'));
+    if (page) break;
+    await delay(100);
+  }
+  if (!page) throw new Error('Main Viral Studio window did not open after the startup splash.');
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
   await page.getByRole('heading', { name: 'Bắt đầu bằng một ý tưởng.' }).waitFor();

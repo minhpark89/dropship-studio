@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import { Badge, Button, Empty, Field, Modal, Notice } from "../components.jsx";
+import { DistributionPanel } from "./Pages.jsx";
 import "./social.css";
 
 const statusLabels = {
@@ -136,6 +137,8 @@ export function SocialPage({ data, project, run, notify }) {
   const [tokenForm, setTokenForm] = useState(blankMetaTokenForm);
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [groupDialog, setGroupDialog] = useState(null);
+  const [metaPageSearch, setMetaPageSearch] = useState("");
+  const [metaTokenSearch, setMetaTokenSearch] = useState("");
 
   useEffect(() => {
     setPages(data.socialPages || []);
@@ -199,6 +202,8 @@ export function SocialPage({ data, project, run, notify }) {
     })
     .slice()
     .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
+  const visibleMetaPages = (meta?.pages || []).filter((page) => !metaPageSearch.trim() || `${page.name} ${page.id}`.toLowerCase().includes(metaPageSearch.trim().toLowerCase()));
+  const visibleMetaTokens = (meta?.tokens || []).filter((token) => !metaTokenSearch.trim() || `${token.name} ${token.id} ${token.tokenMasked}`.toLowerCase().includes(metaTokenSearch.trim().toLowerCase()));
 
   const action = async (key, operation, success) => {
     if (busyId) return null;
@@ -291,9 +296,23 @@ export function SocialPage({ data, project, run, notify }) {
   };
   const publishMeta = async (post) => {
     const preflight = await metaAction(() => api("/meta/preflight", { postId: post.id }, "POST"));
-    if (!preflight?.ready) return;
-    const result = await metaAction(() => api("/meta/publish/reel", { postId: post.id, idempotencyKey: `${post.id}:${post.revision}` }, "POST"), "Đã gửi Reel lên Meta.");
-    if (result) setPosts((current) => current.map((item) => item.id === post.id ? { ...item, status: "published", publication: { source: "meta", externalPostId: result.externalPostId, permalink: result.permalink, publishedAt: result.publishedAt }, revision: item.revision + 1 } : item));
+    if (!preflight?.ready) {
+      const message = (preflight?.checks || []).filter((check) => !check.ok).map((check) => check.message).join(" ") || "Preflight Meta chưa đạt; hãy kiểm tra lại bài đăng.";
+      setError(message);
+      notify(message, "error");
+      return;
+    }
+    const result = await metaAction(() => api("/meta/publish/reel", { postId: post.id, idempotencyKey: `${post.id}:${post.revision}` }, "POST"));
+    if (!result) return;
+    if (result.firstCommentError) {
+      const message = `Reel đã đăng nhưng first comment lỗi: ${result.firstCommentError}`;
+      setPosts((current) => current.map((item) => item.id === post.id ? (result.post || item) : item));
+      setError(message);
+      notify(message, "error");
+      return;
+    }
+    setPosts((current) => current.filter((item) => item.id !== post.id));
+    notify("Đã đăng Reel và xóa bài khỏi kho chờ đăng.");
   };
 
   const savePage = async (event) => {
@@ -382,7 +401,7 @@ export function SocialPage({ data, project, run, notify }) {
   const schedulePost = async (post) => {
     const value = prompt("Nhập thời gian dự kiến theo ISO UTC, ví dụ 2026-12-01T10:00:00Z", post.scheduledAt || "");
     if (value === null) return;
-    const result = await action(`post:${post.id}`, () => api(`/social/posts/${post.id}`, { revision: post.revision, scheduledAt: value, status: "scheduled" }, "PATCH"), "Đã lưu lịch dự kiến. Không có tác vụ tự động đăng.");
+    const result = await action(`post:${post.id}`, () => api(`/social/posts/${post.id}`, { revision: post.revision, scheduledAt: value, status: "scheduled" }, "PATCH"), "Đã lưu lịch. Scheduler sẽ tự publish khi đến giờ nếu preflight đạt.");
     if (result) setPosts((current) => current.map((item) => item.id === result.id ? result : item));
   };
 
@@ -403,7 +422,7 @@ export function SocialPage({ data, project, run, notify }) {
     };
     const result = await action(`publish:${post.id}`, () => api(`/social/posts/${post.id}/publication`, payload), "Đã ghi nhận kết quả đăng thủ công.");
     if (result) {
-      setPosts((current) => current.map((item) => item.id === result.id ? result : item));
+      setPosts((current) => current.filter((item) => item.id !== result.id));
       setPublicationPost(null);
     }
   };
@@ -429,9 +448,18 @@ export function SocialPage({ data, project, run, notify }) {
       </section>
       {!meta?.connected && <div className="social-connection">
         <Info size={18} />
-        <div><strong>Chưa kết nối công cụ đăng tự động</strong><p>Studio chỉ quản lý nội dung local và tạo handoff package. Lịch dưới đây là lịch dự kiến biên tập, không chạy publisher và không gửi bài lên mạng.</p></div>
+        <div><strong>Chưa kết nối Meta publisher</strong><p>Kho, nhóm và lịch vẫn được lưu local. Khi thêm token Meta và gắn Page, scheduler sẽ tự chạy các lịch đã đặt; nếu chưa kết nối, bài vẫn giữ trong kho để kiểm tra.</p></div>
       </div>}
       {error && <Notice error>{error}</Notice>}
+      <section className="social-distribution-intro" aria-label="Quy trình kho video và lịch đăng">
+        <div>
+          <span className="social-kicker">HIGHLIGHT FLOW · 01 → 04</span>
+          <h2>Video xong → Kho → Nhóm Page → Tự đăng</h2>
+          <p>Render hoàn tất sẽ tạo một Content riêng trong kho. Chọn video, chọn nhóm đã có khung giờ, rồi xếp lịch; automation sẽ tự lấy video mới mỗi ngày theo thứ tự.</p>
+        </div>
+        <div className="social-workflow-steps"><span><b>01</b> Kho video</span><span><b>02</b> Chọn nhóm</span><span><b>03</b> Đặt giờ/ngày</span><span><b>04</b> Scheduler đăng</span></div>
+      </section>
+      <DistributionPanel data={data} notify={notify} projectId={project.id} />
       <section className="social-connection" aria-label="Meta connector">
         <UserRound size={18} />
         <div style={{ flex: 1 }}>
@@ -463,8 +491,9 @@ export function SocialPage({ data, project, run, notify }) {
         <div className="meta-management-grid">
           <div className="meta-management-panel">
             <div className="social-panel-header"><h3>Token connections</h3><span>{(meta?.tokens || []).length} kết nối</span></div>
+            <div className="meta-list-toolbar"><input aria-label="Tìm token" value={metaTokenSearch} onChange={(event) => setMetaTokenSearch(event.target.value)} placeholder="Tìm token…" /><span>{visibleMetaTokens.length}/{(meta?.tokens || []).length}</span></div>
             <div className="meta-token-list">
-              {(meta?.tokens || []).length ? meta.tokens.map((token) => (
+              {(meta?.tokens || []).length ? visibleMetaTokens.map((token) => (
                 <div className="meta-token-row" key={token.id}>
                   <div className="meta-token-icon"><ShieldCheck size={16} /></div>
                   <div className="meta-token-main"><strong>{token.name}</strong><small>{token.tokenMasked || "***"} · {token.pagesCount || 0} Page · {token.kind === "VIA_TOKEN" ? `Via Token · App ${token.appId || "?"}` : "System User"}</small>{token.errorMessage && <small className="meta-token-error">{token.errorMessage}</small>}</div>
@@ -477,8 +506,9 @@ export function SocialPage({ data, project, run, notify }) {
           </div>
           <div className="meta-management-panel">
             <div className="social-panel-header"><h3>Page đã đồng bộ</h3><span>{(meta?.pages || []).length} Page</span></div>
+            <div className="meta-list-toolbar"><input aria-label="Tìm Page Meta" value={metaPageSearch} onChange={(event) => setMetaPageSearch(event.target.value)} placeholder="Tìm Page…" /><span>{visibleMetaPages.length}/{(meta?.pages || []).length}</span></div>
             <div className="meta-page-mini-list">
-              {(meta?.pages || []).length ? meta.pages.map((page) => (
+              {(meta?.pages || []).length ? visibleMetaPages.map((page) => (
                 <div className="meta-page-mini" key={page.id}>
                   {page.avatar ? <img src={page.avatar} alt="" /> : <span className="social-page-icon">f</span>}
                   <div><strong>{page.name}</strong><small>{page.id} · {page.tasks?.length ? page.tasks.join(", ") : "Chưa đọc quyền"}</small></div>
@@ -489,8 +519,8 @@ export function SocialPage({ data, project, run, notify }) {
           </div>
         </div>
         <div className="meta-group-grid">
-          <div className="meta-group-panel"><div className="social-panel-header"><h3>Nhóm token</h3><span>{(meta?.tokenGroups || []).length}</span></div>{(meta?.tokenGroups || []).length ? meta.tokenGroups.map((group) => <div className="meta-group-row" key={group.id}><div><strong>{group.name}</strong><small>{group.tokenIds.length} token · {group.strategy}</small></div><span>{group.pageIds.length} Page</span></div>) : <p className="meta-empty">Tạo nhóm token để phân pool theo team hoặc quota.</p>}</div>
-          <div className="meta-group-panel"><div className="social-panel-header"><h3>Nhóm Page</h3><span>{(meta?.pageGroups || []).length}</span></div>{(meta?.pageGroups || []).length ? meta.pageGroups.map((group) => <div className="meta-group-row" key={group.id}><div><strong>{group.name}</strong><small>{group.pageIds.length} Page · lịch {group.scheduleConfig?.staggerMinutes || 15} phút</small></div><span>{group.folderBinding || "Content local"}</span></div>) : <p className="meta-empty">Tạo nhóm Page để quản lý content theo kênh.</p>}</div>
+          <div className="meta-group-panel"><div className="social-panel-header"><h3>Nhóm token</h3><span>{(meta?.tokenGroups || []).length}</span></div>{(meta?.tokenGroups || []).length ? meta.tokenGroups.map((group) => <div className="meta-group-row" key={group.id}><div><strong>{group.name}</strong><small>{group.tokenIds.length} token · {group.strategy === "round_robin" ? "luân phiên đều" : group.strategy === "random" ? "ngẫu nhiên" : "token ít dùng nhất"}</small></div><span>{group.assignedPageCount || 0}/{group.pageIds.length} Page đã chia</span></div>) : <p className="meta-empty">Tạo nhóm token để Studio tự chia Page theo team hoặc quota.</p>}</div>
+          <div className="meta-group-panel"><div className="social-panel-header"><h3>Nhóm Page</h3><span>{(meta?.pageGroups || []).length}</span></div>{(meta?.pageGroups || []).length ? meta.pageGroups.map((group) => <div className="meta-group-row" key={group.id}><div><strong>{group.name}</strong><small>{group.pageIds.length} Page · {group.scheduleConfig?.times?.length ? `mỗi ngày ${group.scheduleConfig.times.join(", ")}` : "chưa đặt giờ"} · {group.scheduleConfig?.enabled ? `tự động ${group.scheduleConfig?.dailyLimit || group.scheduleConfig.times?.length || 1} video/ngày` : "tự động tắt"}</small></div><span>{group.folderBinding || "Content local"}</span></div>) : <p className="meta-empty">Tạo nhóm Page để quản lý content theo kênh.</p>}</div>
         </div>
       </section>
       <div className="social-layout">
@@ -520,7 +550,7 @@ export function SocialPage({ data, project, run, notify }) {
               <div className="social-post-meta"><span>{page?.name || "Page không còn tồn tại"}</span><span>{statusLabels[post.status] || post.status}</span>{post.scheduledAt && <span><CalendarClock size={13} /> {localDate(post.scheduledAt, page?.timezone)}</span>}</div>
               {post.caption && <p className="social-post-caption">{post.caption}</p>}
               {media && <div className="social-post-media"><div className="social-post-media-thumb"><PreviewMedia media={media} /></div><span className="social-post-media-name">{media.name}</span></div>}
-              {post.publication && <div className="social-export-box"><strong>Đã ghi nhận đăng thủ công</strong><p>{post.publication.externalPostId} · {localDate(post.publication.publishedAt, page?.timezone)}</p><a href={post.publication.permalink} target="_blank" rel="noreferrer">Mở permalink <ExternalLink size={12} /></a></div>}
+              {post.publication && <div className={`social-export-box ${post.publication.source === "meta" && post.publication.firstCommentError ? "is-error" : ""}`}><strong>{post.publication.source === "meta" ? (post.publication.firstCommentError ? "Reel đã đăng · first comment lỗi" : "Reel đã đăng trên Meta") : "Đã ghi nhận đăng thủ công"}</strong><p>{post.publication.externalPostId} · {localDate(post.publication.publishedAt, page?.timezone)}</p>{post.publication.firstCommentError && <p className="social-post-publication-error">{post.publication.firstCommentError}</p>}<a href={post.publication.permalink} target="_blank" rel="noreferrer">Mở permalink <ExternalLink size={12} /></a></div>}
               <div className="social-post-actions"><Button onClick={() => setPreviewPost(post)}><Send size={14} /> Xem trước</Button>{!immutable && <><Button disabled={busyId === `post:${post.id}`} onClick={() => setPostDialog({ mode: "edit", post })}><Edit3 size={14} /> Sửa</Button>{post.status === "draft" && <Button disabled={busyId === `post:${post.id}`} variant="primary" onClick={() => approvePost(post)}><Check size={14} /> Duyệt</Button>}{(post.status === "ready" || post.status === "scheduled") && <Button disabled={busyId === `post:${post.id}`} onClick={() => schedulePost(post)}><CalendarClock size={14} /> Lên lịch</Button>}<Button disabled={busyId === `post:${post.id}`} onClick={() => deletePost(post)} className="danger-text"><Trash2 size={14} /></Button></>}{(immutable || post.status !== "draft") && <Button disabled={busyId === `post:${post.id}`} onClick={() => duplicatePost(post)}><Copy size={14} /> Nhân bản</Button>}{(post.status === "ready" || post.status === "scheduled") && <Button disabled={busyId === `export:${post.id}`} onClick={() => exportPost(post)}><FileDown size={14} /> Xuất gói</Button>}{(post.status === "ready" || post.status === "scheduled") && meta?.connected && meta?.boundPage?.id === page?.externalId && <Button variant="primary" disabled={metaBusy} onClick={() => publishMeta(post)}><Send size={14} /> Publish Reel</Button>}</div>
             </article>;
           })}</div> : <div className="social-empty"><Newspaper size={30} /><h3>{selectedPage ? "Chưa có bài đăng trong dự án này" : "Chưa có Page để quản lý"}</h3><p>{selectedPage ? "Tạo bản nháp, chọn media từ thư viện hiện tại rồi duyệt trước khi xuất handoff package." : "Tạo một Facebook Page local để bắt đầu chuẩn bị nội dung."}</p></div>}

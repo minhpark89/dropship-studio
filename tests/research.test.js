@@ -129,6 +129,23 @@ test("LLM settings can discover models from an OpenAI-compatible endpoint", asyn
   assert.equal(calls[0].options.headers.authorization, "Bearer stored-key");
 });
 
+test("LLM model discovery accepts a chat-completions endpoint and normalizes it to models", async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ data: [{ id: "test-model" }] }), { headers: { "content-type": "application/json" } });
+  };
+  const { request } = await fixture({ fetchImpl, llm: { endpoint: "https://llm.example.test/v1", model: "test-model" } });
+  const response = await request("/api/settings/llm/models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endpoint: "https://llm.example.test/v1/chat/completions", apiKey: "new-key" }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await json(response)).models, ["test-model"]);
+  assert.equal(calls[0], "https://llm.example.test/v1/models");
+});
+
 test("LLM connection test calls the saved model without exposing the key", async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {

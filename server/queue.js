@@ -15,6 +15,8 @@ export class JobQueue {
     this.browsers = browsers;
     this.generate = options.generate || generate;
     this.generateDreamFace = options.generateDreamFace || null;
+    this.newsAutomation = options.newsAutomation || null;
+    this.videoAutomation = options.videoAutomation || null;
     this.render = options.render || renderTimeline;
     this.now = options.now || Date.now;
     this.running = new Map();
@@ -23,6 +25,14 @@ export class JobQueue {
       ? null
       : setInterval(() => this.tick(), options.intervalMs || 1200);
     this.timer?.unref();
+  }
+
+  setNewsAutomation(handler) {
+    this.newsAutomation = handler;
+  }
+
+  setVideoAutomation(handler) {
+    this.videoAutomation = handler;
   }
 
   enqueueGeneration(input, { production = null } = {}) {
@@ -274,6 +284,26 @@ export class JobQueue {
                 update,
               );
       if (job.production) this.store.patch("media", media.id, { production: job.production });
+      if (job.type === "news" && this.newsAutomation) {
+        try {
+          const automation = await this.newsAutomation({ job, media });
+          update({ contentPostId: automation?.postId || null, contentAutomation: automation?.status || "generated", contentError: automation?.error || null });
+          if (automation?.error) this.store.log(job, `Content automation: ${automation.error}`);
+        } catch (error) {
+          update({ contentAutomation: "error", contentError: error.message });
+          this.store.log(job, `Content automation failed: ${error.message}`);
+        }
+      }
+      if (job.type !== "news" && media.kind === "video" && media.generated && this.videoAutomation) {
+        try {
+          const automation = await this.videoAutomation({ job, media });
+          update({ contentPostId: automation?.postId || null, contentAutomation: automation?.status || "warehouse", contentError: automation?.error || null });
+          if (automation?.error) this.store.log(job, `Content automation: ${automation.error}`);
+        } catch (error) {
+          update({ contentAutomation: "error", contentError: error.message });
+          this.store.log(job, `Content automation failed: ${error.message}`);
+        }
+      }
       update({
         status: "completed",
         progress: 100,
@@ -453,6 +483,36 @@ export class JobQueue {
     });
   }
 
+  recoverSubmitted(id) {
+    const job = this.store.require("jobs", id);
+    if (job.type !== "news")
+      throw new StudioError("Chỉ có tác vụ News đã gửi mới có thể khôi phục từ Creations.");
+    if (!job.submittedAt)
+      throw new StudioError("Tác vụ này chưa gửi lên DreamFace.");
+    if (!["failed", "cancelled", "interrupted"].includes(job.status))
+      throw new StudioError("Tác vụ này chưa ở trạng thái có thể khôi phục.");
+    if (this.store.state.jobs.some((item) => item.id !== job.id && item.retryOf === job.id))
+      throw new StudioError("Tác vụ này đã có lần thử lại. Hãy dùng lần thử mới nhất.", "ALREADY_RETRIED", 409);
+    const payload = {
+      ...structuredClone(job.payload),
+      recoverSubmitted: true,
+      scheduledAt: null,
+    };
+    const recovered = this.store.patch("jobs", job.id, {
+      payload,
+      status: "queued",
+      progress: 0,
+      stage: null,
+      error: null,
+      errorCode: null,
+      finishedAt: null,
+      startedAt: null,
+    });
+    this.store.log(recovered, "Attempting to recover the submitted DreamFace result from Creations without resubmitting it.");
+    this.tick();
+    return recovered;
+  }
+
   retry(id, confirmResubmit) {
     const job = this.store.require("jobs", id);
     if (!["failed", "cancelled", "interrupted"].includes(job.status))
@@ -472,6 +532,7 @@ export class JobQueue {
       ...structuredClone(job.payload),
       scheduledAt: null,
     };
+    delete payload.recoverSubmitted;
     if (job.type === "generate") payload.autoAssemble = original.payload.autoAssemble;
     if (job.type === "news" && original.payload.presenterMediaId) payload.presenterMediaId = original.payload.presenterMediaId;
     if (job.type === "render" && job.assemblyBatchId) {

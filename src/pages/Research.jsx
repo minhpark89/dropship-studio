@@ -108,7 +108,9 @@ function ResearchForm({ project, onResult, notify }) {
   );
 }
 
-function ResultCard({ result, onImport, importing, onUse, onDreamFace, dreaming, onAssemble, onSearchImages, searchingImages, onImportSearchImages, importingSearchImages, onAutoVideo, autoBuilding }) {
+function ResultCard({ result, accounts, onImport, importing, onUse, onDreamFace, dreaming, onAssemble, onSearchImages, searchingImages, onImportSearchImages, importingSearchImages }) {
+  const [videoCount, setVideoCount] = useState(1);
+  const [accountId, setAccountId] = useState("auto");
   return (
     <article className="research-result-card">
       <div className="research-result-header"><div><span className="research-kicker">{result.niche} · {dateLabel(result.createdAt)}</span><h3>{result.headline || result.topic}</h3></div><span className="research-result-state"><CheckCircle2 size={14} /> Đã lưu</span></div>
@@ -116,12 +118,11 @@ function ResultCard({ result, onImport, importing, onUse, onDreamFace, dreaming,
       {result.script && <div className="research-script"><strong>Script nháp</strong><p>{result.script}</p></div>}
       {result.articles?.length > 0 && <div className="research-articles"><strong>Nguồn tham khảo ({result.articles.length})</strong>{result.articles.map((article) => <a key={article.id} href={article.url} target="_blank" rel="noreferrer"><span><b>{article.title}</b><small>{article.source || "Nguồn RSS"} · relevance {Math.round((article.relevance || 0) * 100)}%</small></span><ExternalLink size={14} /></a>)}</div>}
       {result.imageQueries?.length > 0 && <div className="research-tags"><strong>Image queries</strong><div>{result.imageQueries.map((query) => <span key={query}>{query}</span>)}</div></div>}
-      {result.imageQueries?.length > 0 && <div className="research-auto-video"><span><Sparkles size={15} /><strong>One-click News Render</strong><small>LLM tìm ảnh, ráp caption, zoom nhẹ và đưa bản nháp 9:16 vào hàng đợi.</small></span><Button variant="primary" onClick={() => onAutoVideo(result)} busy={autoBuilding}><Sparkles size={14} /> Tự dựng &amp; render</Button></div>}
+      <div className="research-auto-video"><span><Sparkles size={15} /><strong>Render News video</strong><small>Tự tìm ảnh editorial, tạo hook, cho MC DreamFace nói, tạo Content, đăng bài website và gắn URL vào first comment. Chọn một profile để cả batch dùng cùng MC; Auto sẽ xoay profile khỏe.</small></span><div className="research-auto-video-controls"><label>Số video<input type="number" min="1" max="30" value={videoCount} onChange={(event) => setVideoCount(Math.max(1, Math.min(30, Number(event.target.value) || 1)))} /></label><label>MC / profile<select value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="auto">Auto · xoay profile khỏe</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.status}</option>)}</select></label><small>Ảnh và bố cục được tạo khác nhau theo từng video</small></div><Button variant="primary" onClick={() => onDreamFace(result, videoCount, accountId)} busy={dreaming}><Sparkles size={14} /> Render {videoCount === 1 ? "1 News video" : `${videoCount} News videos`}</Button></div>
       {result.imageQueries?.length > 0 && <div className="research-image-search"><div className="research-image-search-heading"><div><strong>Kho ảnh công khai</strong><small> Wikimedia Commons · có giấy phép và nguồn để kiểm tra</small></div><Button onClick={() => onSearchImages(result)} busy={searchingImages}><Image size={14} /> {result.imageSearchResults?.length ? "Tìm lại ảnh" : "Tìm ảnh theo query"}</Button></div>{result.imageSearchResults?.length > 0 && <><div className="research-image-grid">{result.imageSearchResults.slice(0, 6).map((image) => <ResearchImageTile key={image.id} image={image} />)}</div><div className="research-image-actions"><span>{result.imageSearchResults.length} ảnh đã tìm được · tối đa 12 ảnh sẽ nhập</span><Button onClick={() => onImportSearchImages(result)} busy={importingSearchImages}><Download size={14} /> Tải ảnh về thư viện</Button></div></>}</div>}
       {result.articles?.some((article) => article.imageUrl) && <div className="research-image-actions"><span>{result.imageMediaIds?.length || 0} ảnh đã nhập vào thư viện</span><Button onClick={() => onImport(result)} busy={importing}><ImageDown size={14} /> Tải ảnh bài viết</Button></div>}
       {result.imageMediaIds?.length > 0 && <div className="research-image-actions"><span>{result.imageMediaIds.length} ảnh sẵn sàng để dựng</span><Button onClick={() => onAssemble(result)}><Film size={14} /> Ráp ảnh + caption</Button></div>}
       {result.script && <div className="research-image-actions"><span>Script đã sẵn sàng cho trình dựng video</span><Button onClick={() => onUse(result)}><Film size={14} /> Dùng script tạo video</Button></div>}
-      {result.script && <div className="research-image-actions research-dreamface-action"><span><Sparkles size={14} /> Tạo news broadcast dọc: MC DreamFace nói tóm tắt và đọc CTA first comment</span><Button variant="primary" onClick={() => onDreamFace(result)} busy={dreaming}><Sparkles size={14} /> DreamFace MC</Button></div>}
       {result.warnings?.length > 0 && <div className="research-warning"><CircleHelp size={15} />{result.warnings.join(" · ")}</div>}
     </article>
   );
@@ -177,6 +178,10 @@ export function ResearchPage({ data, project, notify, navigate }) {
   const [importingSearchImages, setImportingSearchImages] = useState("");
   const [dreaming, setDreaming] = useState("");
   const [autoVideo, setAutoVideo] = useState("");
+  const dreamfaceAccounts = useMemo(
+    () => (data.accounts || []).filter((account) => account.provider === "dreamface"),
+    [data.accounts],
+  );
   useEffect(() => setResults(data.researchResults || []), [data.researchResults]);
   const projectResults = useMemo(() => results.filter((result) => result.projectId === project.id).sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0)), [results, project.id]);
   const onResult = (result) => setResults((current) => [result, ...current.filter((item) => item.id !== result.id)]);
@@ -226,10 +231,10 @@ export function ResearchPage({ data, project, notify, navigate }) {
     notify("Đã chuyển script sang màn hình tạo video.");
     navigate?.("create");
   };
-  const createDreamFaceVideo = async (result) => {
-    if (dreaming) return;
-    const dreamface = (data.accounts || []).filter((account) => account.provider === "dreamface");
-    const ready = dreamface.find((account) => account.status === "ready");
+  const createDreamFaceVideo = async (result, requestedCount = 1, selectedAccountId = "auto") => {
+    if (dreaming || autoVideo) return;
+    const readyCount = dreamfaceAccounts.filter((account) => account.status === "ready").length;
+    const count = Math.max(1, Math.min(30, Number(requestedCount) || 1));
     setDreaming(result.id);
     try {
       const batch = await api("/production/batches", {
@@ -237,19 +242,53 @@ export function ResearchPage({ data, project, notify, navigate }) {
         projectId: project.id,
         contentType: "news",
         autoResearch: true,
+        researchId: result.id,
         topic: (result.topic || result.headline || "US news").slice(0, 200),
-        count: 1,
+        count,
         engine: "dreamface",
-        accountId: ready?.id || "auto",
+        accountId: selectedAccountId || "auto",
         references: [],
         feeds: [],
+        variationPolicy: "visual-unique",
+        fontStyle: "news",
       });
-      notify(`Đã đưa ${batch.items?.length || 1} news presenter video vào hàng đợi${ready ? "." : ". Hãy đăng nhập một DreamFace slot để chạy."}`);
-      navigate?.("queue");
+      notify(`Đã đưa ${batch.items?.length || count} news presenter video vào hàng đợi. MC ${selectedAccountId && selectedAccountId !== "auto" ? "được giữ cùng profile đã chọn" : "sẽ xoay theo profile khỏe"}; ảnh và chuyển động được tạo biến thể theo từng video${readyCount ? ` · ${readyCount} profile sẵn sàng.` : "; hãy đăng nhập một DreamFace slot để chạy."}`);
+      // The News render workspace owns the preparation batch as well as the
+      // provider jobs. Keep the user there so image/LLM failures are visible
+      // and the failed item can be retried instead of disappearing in Queue.
+      navigate?.("editor");
     } catch (error) {
       notify(error.message, "error");
     } finally {
       setDreaming("");
+    }
+  };
+  const renderAllResearch = async () => {
+    if (autoVideo || dreaming || !projectResults.length) return;
+    const selected = projectResults.slice(0, 30);
+    setAutoVideo("all");
+    const results = await Promise.allSettled(selected.map((result) => api("/production/batches", {
+      requestId: crypto.randomUUID(),
+      projectId: project.id,
+      contentType: "news",
+      autoResearch: true,
+      researchId: result.id,
+      topic: (result.topic || result.headline || "US news").slice(0, 200),
+      count: 1,
+      engine: "dreamface",
+      accountId: "auto",
+      references: [],
+      feeds: [],
+      variationPolicy: "visual-unique",
+      fontStyle: "news",
+    })));
+    const queued = results.filter((item) => item.status === "fulfilled").length;
+    setAutoVideo("");
+    if (queued) {
+      notify(`Đã đưa ${queued}/${selected.length} tin vào News Queue. Các profile DreamFace sẵn sàng sẽ chạy song song.`);
+      navigate?.("editor");
+    } else {
+      notify("Không tạo được batch News nào. Hãy kiểm tra LLM và DreamFace trong Cài đặt.", "error");
     }
   };
   const autoBuildVideo = async (result) => {
@@ -286,7 +325,7 @@ export function ResearchPage({ data, project, notify, navigate }) {
       notify(error.message, "error");
     }
   };
-  return <div className="page research-page"><div className="page-heading research-heading"><div><div className="eyebrow">RESEARCH WORKSPACE</div><h1>Từ chủ đề đến góc kể chuyện.</h1><p>Thu thập nguồn, chọn angle và chuẩn bị script trong phạm vi dự án <strong>{project.name}</strong>.</p></div><div className="research-heading-mark"><Newspaper size={20} /><span>{projectResults.length} kết quả</span></div></div><div className="research-tabs research-primary-tabs"><button className={view === "research" ? "active" : ""} onClick={() => setView("research")}><Search size={15} /> Research</button><button className={view === "dreamface" ? "active" : ""} onClick={() => setView("dreamface")}><Sparkles size={15} /> DreamFace</button></div>{view === "research" && <><section className="research-card research-run-card"><div className="research-card-heading"><div><span className="research-kicker">EDITORIAL INPUT</span><h2><Search size={19} /> Nghiên cứu chủ đề</h2><p>RSS/Atom được giới hạn và deduplicate trước khi tổng hợp.</p></div><span className="research-step"><span>01</span> INPUT</span></div><ResearchForm project={project} onResult={onResult} notify={notify} /></section><section className="research-results"><div className="research-section-heading"><div><span className="research-kicker">PROJECT RESULTS</span><h2>Kết quả gần đây</h2></div>{projectResults.length > 0 && <span>{projectResults.length} bản ghi</span>}</div>{projectResults.length ? projectResults.map((result) => <ResultCard key={result.id} result={result} onImport={importImages} importing={importing === result.id} onUse={useScript} onDreamFace={createDreamFaceVideo} dreaming={dreaming === result.id} onAssemble={assembleImages} onSearchImages={searchImages} searchingImages={searchingImages === result.id} onImportSearchImages={importSearchImages} importingSearchImages={importingSearchImages === result.id} onAutoVideo={autoBuildVideo} autoBuilding={autoVideo === result.id} />) : <Empty icon={Newspaper} title="Chưa có research nào">Nhập một chủ đề để tạo bản ghi đầu tiên cho dự án này.</Empty>}</section></>}{view === "dreamface" && <DreamFacePanel data={data} notify={notify} />}</div>;
+  return <div className="page research-page"><div className="page-heading research-heading"><div><div className="eyebrow">RESEARCH WORKSPACE</div><h1>Từ chủ đề đến góc kể chuyện.</h1><p>News Studio là luồng riêng: research → ảnh editorial → MC DreamFace → bài website → first comment.</p></div><div className="research-heading-actions"><Button variant="primary" onClick={() => navigate?.("editor")}><Newspaper size={15} /> Render 1 News video</Button><div className="research-heading-mark"><Newspaper size={20} /><span>{projectResults.length} kết quả</span></div></div></div><div className="research-tabs research-primary-tabs"><button className={view === "research" ? "active" : ""} onClick={() => setView("research")}><Search size={15} /> Research &amp; News</button><button className={view === "dreamface" ? "active" : ""} onClick={() => setView("dreamface")}><Sparkles size={15} /> DreamFace profiles</button></div>{view === "research" && <><section className="research-card research-run-card"><div className="research-card-heading"><div><span className="research-kicker">EDITORIAL INPUT</span><h2><Search size={19} /> Nghiên cứu chủ đề</h2><p>RSS/Atom được giới hạn và deduplicate trước khi tổng hợp.</p></div><span className="research-step"><span>01</span> INPUT</span></div><ResearchForm project={project} onResult={onResult} notify={notify} /></section><section className="research-results"><div className="research-section-heading"><div><span className="research-kicker">NEWS STUDIO · PROJECT RESULTS</span><h2>Kết quả gần đây</h2></div><div className="research-results-heading-actions">{projectResults.length > 0 && <span>{projectResults.length} bản ghi</span>}{projectResults.length > 0 && <Button variant="primary" onClick={renderAllResearch} busy={autoVideo === "all"}><Sparkles size={14} /> Render tất cả {Math.min(projectResults.length, 30)} tin</Button>}</div></div>{projectResults.length ? projectResults.map((result) => <ResultCard key={result.id} result={result} accounts={dreamfaceAccounts} onImport={importImages} importing={importing === result.id} onUse={useScript} onDreamFace={createDreamFaceVideo} dreaming={dreaming === result.id} onAssemble={assembleImages} onSearchImages={searchImages} searchingImages={searchingImages === result.id} onImportSearchImages={importSearchImages} importingSearchImages={importingSearchImages === result.id} />) : <Empty icon={Newspaper} title="Chưa có research nào">Nhập một chủ đề để tạo bản ghi đầu tiên cho dự án này.</Empty>}</section></>}{view === "dreamface" && <DreamFacePanel data={data} notify={notify} />}</div>;
 }
 
 export const Research = ResearchPage;

@@ -158,7 +158,7 @@ export async function probe(file, settings) {
 export async function importMedia(
   store,
   input,
-  { projectId, name, move = false, generated = false, jobId = null } = {},
+  { projectId, name, move = false, generated = false, jobId = null, mediaType = "general" } = {},
 ) {
   if (projectId) store.require("projects", projectId);
   const extension = path.extname(name || input).toLowerCase();
@@ -220,6 +220,7 @@ export async function importMedia(
     thumbnail,
     generated,
     jobId,
+    mediaType: String(mediaType || "general").trim().slice(0, 60) || "general",
   });
 }
 

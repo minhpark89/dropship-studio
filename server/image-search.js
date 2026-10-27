@@ -168,6 +168,7 @@ export async function downloadImageAsset({ image, store, projectId, fetchImpl = 
       projectId,
       name: `${String(image.title || "Wikimedia image").slice(0, 100)}${extension}`,
       move: true,
+      mediaType: "news-editorial",
     });
     return store.patch("media",media.id,{sourceUrl:image.pageUrl||image.imageUrl,attribution:image.attribution||"",license:image.license||""});
   } finally {

@@ -171,6 +171,7 @@ async function importGeneratedImage(store, job, account, output, label) {
       generated: true,
       move: true,
       jobId: job.id,
+      mediaType: "news-mc",
     });
     store.patch("accounts", account.id, {
       avatarMediaId: media.id,

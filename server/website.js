@@ -13,8 +13,9 @@ const siteSchema=z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),name:z.s
 const htmlEscape=value=>String(value).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
 export function articleHtml(markdown) {
   return String(markdown).split(/\n\s*\n/).map(block=>{
-    const safe=htmlEscape(block).replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" rel="noopener noreferrer">$1</a>').replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
+    const safe=htmlEscape(block).replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,'<figure><img src="$2" alt="$1" loading="lazy" decoding="async"><figcaption>$1</figcaption></figure>').replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" rel="noopener noreferrer">$1</a>').replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
     const heading=safe.match(/^(#{1,3})\s+([\s\S]*)$/);
+    if (/^<figure>/.test(safe)) return safe;
     return heading?`<h${heading[1].length}>${heading[2]}</h${heading[1].length}>`:`<p>${safe.replaceAll("\n","<br>")}</p>`;
   }).join("\n");
 }
@@ -22,6 +23,14 @@ function csrf(html) {
   return html.match(/<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)/i)?.[1] || html.match(/name=["']_token["']\s+value=["']([^"']+)/i)?.[1] || "";
 }
 function loggedOut(response,html) {return /\/login(?:\?|$)|\/auth\//.test(new URL(response.url()).pathname)||/type=["']password["']/i.test(html);}
+function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function verifiedArticlePage(html, url, title) {
+  const canonical = String(html || "").match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)/i)?.[1]
+    ?.replaceAll("&amp;", "&");
+  if (canonical === url) return true;
+  const heading = new RegExp(`<h1\\b[^>]*>\\s*${escapeRegExp(htmlEscape(title))}\\s*</h1>`, "i");
+  return heading.test(String(html || ""));
+}
 
 export class WebsiteService {
   constructor(store,{requestFactory=request,sources=websiteImportSources}={}) {
@@ -77,37 +86,52 @@ export class WebsiteService {
       site.provider=session.provider;site.lastTest=result;this.store.save();return result;
     } finally{await session.context.dispose();}
   }
-  async publish(postId,{revision,siteId}={}) {
+  async publish(postId,{revision,siteId,forceRevision=false}={}) {
     const post=this.store.require("socialPosts",postId),site=this.selected(siteId);
     if(post.revision!==revision)throw new StudioError("Content changed. Reload it before publishing.","STALE_REVISION",409);
     if(post.contentType!=="news"||!post.articleBody?.trim())throw new StudioError("Generate and review the news article first.","ARTICLE_REQUIRED",422);
     if(post.status!=="draft")throw new StudioError("Return this content to Draft before publishing the website article.","DRAFT_REQUIRED",409);
     const original=structuredClone(post);
     const hash=createHash("sha256").update(post.title+'\n'+post.articleBody).digest("hex");
-    if(post.website?.status==="published") {
-      if(post.website.contentHash!==hash||post.website.siteId!==site.id)throw new StudioError("This article is already published. Open it on the website to edit it.","ARTICLE_ALREADY_PUBLISHED",409);
-      return post;
-    }
     if(this.pending.has(post.id))throw new StudioError("The article is already being sent.","WEBSITE_BUSY",409);
     this.pending.add(post.id);
     let session;
     try {
       session=await this.session(site);
-      const slug=`${original.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,100)}-${post.id.slice(0,8)}`;
+      const baseSlug=`${original.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,100)}-${post.id.slice(0,8)}`;
+      let stalePublished=false;
+      if(post.website?.status==="published" && post.website.siteId===site.id) {
+        const previous=await session.context.get(post.website.url);
+        const previousHtml=previous.ok()?await previous.text():"";
+        const previousVerified=previous.ok() && verifiedArticlePage(previousHtml,post.website.url,original.title);
+        if(previousVerified) {
+          if(post.website.contentHash!==hash) {
+            if(!forceRevision) throw new StudioError("This article is already published. Open it on the website to edit it.","ARTICLE_ALREADY_PUBLISHED",409);
+            stalePublished=true;
+          } else return post;
+        }
+        stalePublished=true;
+      } else if(post.website?.status==="published") {
+        throw new StudioError("This article is already published on another website. Open it there before publishing again.","ARTICLE_ALREADY_PUBLISHED",409);
+      }
+      const slug=`${baseSlug}${stalePublished ? `-r${revision}` : ""}`;
       const url=`${site.baseUrl}/blog/${slug}`;
       const existing=await session.context.get(url);
-      let confirmed=existing.ok() && (await existing.text()).includes(htmlEscape(original.title));
-      if(!confirmed && post.website?.submittedAt)throw new StudioError("The earlier publish result is unconfirmed. Check the website before sending again.","WEBSITE_UNCONFIRMED",409);
+      const existingHtml=existing.ok()?await existing.text():"";
+      let confirmed=existing.ok() && verifiedArticlePage(existingHtml,url,original.title);
+      if(!confirmed && post.website?.submittedAt && !stalePublished && !forceRevision)throw new StudioError("The earlier publish result is unconfirmed. Check the website before sending again.","WEBSITE_UNCONFIRMED",409);
       if(!confirmed) {
         if(this.store.require("socialPosts",postId).revision!==revision)throw new StudioError("Content changed. Reload it before publishing.","STALE_REVISION",409);
-        const payload={title:original.title,slug,description:articleHtml(original.articleBody),image:null,seo_title:original.title,seo_description:(original.caption||"").slice(0,300),og_title:original.title,og_image:null,twitter_title:original.title,twitter_image:null,is_active:true,is_home:true,is_top:false,category_ids:[],tag_ids:[]};
+        const coverImage=original.coverImageUrl || null;
+        const payload={title:original.title,slug,description:articleHtml(original.articleBody),image:coverImage,seo_title:original.title,seo_description:(original.caption||"").slice(0,300),og_title:original.title,og_image:coverImage,twitter_title:original.title,twitter_image:coverImage,is_active:true,is_home:true,is_top:false,category_ids:[],tag_ids:[]};
         this.store.patch("socialPosts",post.id,{website:{siteId:site.id,slug,url,status:"sending",submittedAt:new Date().toISOString(),contentHash:hash}});
         const response=session.provider==="cms"
           ? await session.context.post("/admin/api/v1/posts",{headers:{"X-CSRF-TOKEN":session.token,accept:"application/json"},data:payload})
-          : await session.context.post("/backend/posts",{headers:{"X-CSRF-TOKEN":session.token},multipart:{_token:session.token,title:payload.title,slug,description:payload.description,image:"",seo_title:payload.seo_title,seo_description:payload.seo_description,is_active:"1",is_home:"1",is_top:"0"}});
+          : await session.context.post("/backend/posts",{headers:{"X-CSRF-TOKEN":session.token},multipart:{_token:session.token,title:payload.title,slug,description:payload.description,image:coverImage || "",seo_title:payload.seo_title,seo_description:payload.seo_description,is_active:"1",is_home:"1",is_top:"0"}});
         if(!response.ok())throw new StudioError("The website did not confirm article creation. Check the website before retrying.","WEBSITE_UNCONFIRMED",502);
         const publicPage=await session.context.get(url);
-        confirmed=publicPage.ok() && (await publicPage.text()).includes(htmlEscape(original.title));
+        const publicHtml=publicPage.ok()?await publicPage.text():"";
+        confirmed=publicPage.ok() && verifiedArticlePage(publicHtml,url,original.title);
       }
       if(!confirmed)throw new StudioError("The article was sent, but its public URL is not confirmed yet.","WEBSITE_UNCONFIRMED",502);
       const latest=this.store.require("socialPosts",postId);
@@ -124,6 +148,6 @@ export function mountWebsiteRoutes(app,store,options={}) {
   app.post("/api/website/connections",(req,res)=>res.json(service.save(req.body)));
   app.patch("/api/website/settings",(req,res)=>{const site=service.selected(req.body.activeId);store.state.settings.website.activeId=site.id;store.state.settings.content.articleWebsiteUrl=site.baseUrl;store.save();res.json(store.state.settings.website);});
   app.post("/api/website/test",async(req,res)=>res.json(await service.test(req.body.id)));
-  app.post("/api/content/posts/:id/website",async(req,res)=>res.json(await service.publish(req.params.id,z.object({revision:z.number().int().positive(),siteId:z.string().optional()}).parse(req.body))));
+  app.post("/api/content/posts/:id/website",async(req,res)=>res.json(await service.publish(req.params.id,z.object({revision:z.number().int().positive(),siteId:z.string().optional(),forceRevision:z.boolean().default(false)}).parse(req.body))));
   return service;
 }

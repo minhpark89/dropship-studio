@@ -5,7 +5,7 @@ import path from "node:path";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { Store } from "../server/store.js";
-import { generateContent, mountContentRoutes } from "../server/content.js";
+import { createContentFromMedia, generateContent, inferResearchId, mediaContentType, mountContentRoutes } from "../server/content.js";
 import { mountSocialRoutes } from "../server/social.js";
 
 async function fixture(t,options={}) {
@@ -19,6 +19,17 @@ async function fixture(t,options={}) {
   const request=(route,data,method="POST")=>fetch(base+route,{method,headers:{"content-type":"application/json"},body:JSON.stringify(data)});
   return {store,project,request};
 }
+
+test("legacy News renders are classified and linked back to their saved research", () => {
+  const store = { state: { researchResults: [
+    { id: "research-news", projectId: "project-1", headline: "Trump rallies Michigan Republicans in Port Huron", articles: [{ title: "Port Huron rally draws crowd" }] },
+    { id: "research-other", projectId: "project-1", headline: "Weather update for California", articles: [] },
+  ] } };
+  const media = { projectId: "project-1", name: "News · Trump rallies Michigan Republicans in Port Huron.mp4", production: null };
+  assert.equal(mediaContentType(media), "news");
+  assert.equal(inferResearchId(store, media), "research-news");
+  assert.equal(mediaContentType({ name: "Product · travel mug.mp4", production: null }), "product");
+});
 
 test("product content creates only a first comment and appends the configured store link",async t=>{
   let calls=0;
@@ -73,4 +84,138 @@ test("Content rejects research and videos from another project before calling th
   const options={llm:async()=>assert.fail("Cross-project sources reached the LLM")};
   await assert.rejects(()=>generateContent(store,{projectId:project.id,contentType:"news",researchId:research.id},options),error=>error.code==="RESEARCH_PROJECT_MISMATCH");
   await assert.rejects(()=>generateContent(store,{projectId:project.id,contentType:"product",mediaId:media.id},options),error=>error.code==="MEDIA_PROJECT_MISMATCH");
+});
+
+test("news render automation leaves a Content error that can be regenerated", async t => {
+  let fail = false;
+  const options = {
+    articleReader: async () => "Officials confirmed the reported development.",
+    llm: async () => {
+      if (fail) throw new Error("LLM temporarily unavailable");
+      return { title: "Verified news update", caption: "A verified update.", articleBody: "The report confirms the development and provides additional context for readers. Officials said the available evidence supports the update, while the published source contains the details readers should review before drawing further conclusions." };
+    },
+  };
+  const { store, project, request } = await fixture(t, options);
+  store.state.settings.content.articleWebsiteUrl = "https://news.example.test";
+  const research = store.add("researchResults", {
+    projectId: project.id,
+    headline: "Verified news update",
+    script: "Officials confirmed the reported development.",
+    articles: [{ title: "Verified source", source: "Agency", url: "https://agency.example.test/story", summary: "Confirmed details" }],
+  });
+  const media = store.add("media", { projectId: project.id, kind: "video", generated: true, name: "News broadcast.mp4", production: { contentType: "news", researchId: research.id, title: research.headline } });
+  const post = await createContentFromMedia(store, media.id, { source: "news-render", options });
+  assert.equal(post.automationStatus, "generated");
+  assert.equal(post.automationError, null);
+  fail = true;
+  const regenerated = await (await request(`/api/content/posts/${post.id}/regenerate`, {})).json();
+  assert.equal(regenerated.id, post.id);
+  assert.equal(regenerated.automationStatus, "error");
+  assert.match(regenerated.automationError, /LLM temporarily unavailable/);
+  assert.match(regenerated.firstComment, /https:\/\/news\.example\.test/);
+});
+
+test("news content carries a public research illustration into the article", async t => {
+  const options = {
+    articleReader: async () => "Confirmed launch details from the source.",
+    llm: async () => ({ title: "Agency reports launch", caption: "A verified update.", articleBody: "The report confirms the development and gives readers enough context to understand what happened without adding unsupported claims." }),
+  };
+  const { store, project } = await fixture(t, options);
+  store.state.settings.content.articleWebsiteUrl = "https://news.example/article";
+  const research = store.add("researchResults", {
+    projectId: project.id,
+    topic: "Space",
+    headline: "Agency launch",
+    articles: [{ title: "Launch confirmed", source: "Agency", url: "https://agency.example/report", summary: "Launch details", imageUrl: "https://images.example/launch.jpg" }],
+  });
+  const media = store.add("media", { projectId: project.id, kind: "video", generated: true, production: { contentType: "news", researchId: research.id } });
+  const post = await createContentFromMedia(store, media.id, { source: "news-render", options });
+  assert.equal(post.coverImageUrl, "https://images.example/launch.jpg");
+  assert.match(post.articleBody, /!\[News illustration\]\(https:\/\/images\.example\/launch\.jpg\)/);
+});
+
+test("news content places multiple verified research images throughout the article", async t => {
+  const options = {
+    articleReader: async () => "The source confirms the event and its location.",
+    llm: async () => ({
+      title: "Agency reports launch",
+      caption: "A verified update.",
+      articleBody: "The report confirms the development and gives readers enough context to understand what happened.\n\n## What happened\nThe available report describes the event and identifies the people involved.\n\n## What remains unknown\nThe source does not provide every detail, so readers should follow the original coverage.",
+    }),
+  };
+  const { store, project } = await fixture(t, options);
+  store.state.settings.content.articleWebsiteUrl = "https://news.example/article";
+  const research = store.add("researchResults", {
+    projectId: project.id,
+    topic: "Space",
+    headline: "Agency launch",
+    articles: [{ title: "Launch confirmed", source: "Agency", url: "https://agency.example/report", summary: "Launch details" }],
+    imageSearchResults: [
+      { id: "image-1", imageUrl: "https://images.example/one.jpg", title: "Launch site" },
+      { id: "image-2", imageUrl: "https://images.example/two.jpg", title: "Agency briefing" },
+      { id: "image-3", imageUrl: "https://images.example/three.jpg", title: "Mission hardware" },
+    ],
+  });
+  const media = store.add("media", { projectId: project.id, kind: "video", generated: true, production: { contentType: "news", researchId: research.id } });
+  const post = await createContentFromMedia(store, media.id, { source: "news-render", options });
+  assert.equal(post.coverImageUrl, "https://images.example/one.jpg");
+  assert.equal((post.articleBody.match(/!\[[^\]]*\]\(https:\/\/images\.example\//g) || []).length, 3);
+  assert.match(post.articleBody, /Agency briefing/);
+  assert.match(post.articleBody, /Mission hardware/);
+  assert.ok(post.articleBody.indexOf("## Sources") > post.articleBody.indexOf("Mission hardware"));
+});
+
+test("published news content can repair missing inline images before a revision publish", async t => {
+  const { store, project, request } = await fixture(t);
+  const research = store.add("researchResults", {
+    projectId: project.id,
+    topic: "Space",
+    headline: "Agency launch",
+    articles: [{ title: "Launch confirmed", source: "Agency", url: "https://agency.example/report", summary: "Launch details" }],
+    imageSearchResults: [
+      { id: "image-1", imageUrl: "https://images.example/one.jpg", title: "Launch site" },
+      { id: "image-2", imageUrl: "https://images.example/two.jpg", title: "Agency briefing" },
+      { id: "image-3", imageUrl: "https://images.example/three.jpg", title: "Mission hardware" },
+    ],
+  });
+  const post = store.add("socialPosts", {
+    projectId: project.id,
+    contentType: "news",
+    title: "Agency launch",
+    caption: "Verified update",
+    articleBody: "The report confirms the launch.\n\n![News illustration](https://images.example/one.jpg)\n\n## Sources\n- [Agency](https://agency.example/report)",
+    coverImageUrl: "https://images.example/one.jpg",
+    researchId: research.id,
+    mediaIds: [],
+    status: "draft",
+    revision: 1,
+    website: { status: "published", contentHash: "old", url: "https://news.example/blog/agency-launch" },
+  });
+  const response = await request(`/api/content/posts/${post.id}/repair-images`, { revision: 1 });
+  assert.equal(response.status, 200);
+  const repaired = await response.json();
+  assert.equal((repaired.articleBody.match(/!\[[^\]]*\]\(https:\/\/images\.example\//g) || []).length, 3);
+  assert.equal(repaired.website.contentChanged, true);
+  assert.equal(repaired.revision, 2);
+});
+
+test("published News can sync its verified website URL into the exact first comment", async t => {
+  const { store, project, request } = await fixture(t);
+  const post = store.add("socialPosts", {
+    projectId: project.id,
+    contentType: "news",
+    title: "Verified report",
+    articleBody: "A verified report.",
+    firstComment: "Read the old link: https://old.example/article",
+    website: { status: "published", url: "https://news.example/blog/verified-report" },
+    mediaIds: [],
+    status: "draft",
+    revision: 1,
+  });
+  const response = await request(`/api/content/posts/${post.id}/sync-first-comment`, { revision: 1 });
+  assert.equal(response.status, 200);
+  const synced = await response.json();
+  assert.equal(synced.firstComment, "Read the full article: https://news.example/blog/verified-report");
+  assert.equal(synced.linkUrl, "https://news.example/blog/verified-report");
+  assert.equal(synced.revision, 2);
 });

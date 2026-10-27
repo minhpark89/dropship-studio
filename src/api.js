@@ -4,10 +4,16 @@ export async function api(url, body, method = 'POST') {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await response.json();
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw.trim() ? JSON.parse(raw) : null;
+  } catch {
+    data = { error: raw.trim() || 'Máy chủ trả về dữ liệu không hợp lệ.' };
+  }
   if (!response.ok) {
-    const error = new Error(data.error || 'Yêu cầu thất bại.');
-    error.code = data.code;
+    const error = new Error(data?.error || 'Yêu cầu thất bại.');
+    error.code = data?.code;
     throw error;
   }
   return data;
@@ -18,8 +24,10 @@ export async function uploadFiles(files, projectId) {
   form.append('projectId', projectId);
   for (const file of files) form.append('files', file);
   const response = await fetch('/api/media/upload', { method: 'POST', body: form });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Tải tệp thất bại.');
+  const raw = await response.text();
+  let data = null;
+  try { data = raw.trim() ? JSON.parse(raw) : null; } catch { data = { error: raw.trim() }; }
+  if (!response.ok) throw new Error(data?.error || 'Tải tệp thất bại.');
   const errors = data.results.filter((item) => !item.ok);
   if (errors.length) throw new Error(errors.map((item) => `${item.name}: ${item.error}`).join('\n'));
   return data.results;

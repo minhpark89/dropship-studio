@@ -73,8 +73,11 @@ export function buildResearchAssemblyTimeline(
         ? Math.min(Number(media.duration), options.template === "news-short" ? 3 : Number(media.duration))
         : options.template === "news-short" ? 3 : 5,
       speed: 1,
-      zoom: options.template === "news-short" ? 1.06 : 1,
-      fit: "cover",
+      // News images are placed in a portrait composition. Keep the source
+      // completely visible; the broadcast renderer supplies the moving
+      // background treatment separately.
+      zoom: 1,
+      fit: options.template === "news-short" ? "contain" : "cover",
       volume: 1,
     }));
 

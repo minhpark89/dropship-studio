@@ -11,6 +11,7 @@ import {
   FileUp,
   KeyRound,
   Globe2,
+  MailPlus,
 } from "lucide-react";
 import { api } from "../api.js";
 import { Button, Modal, Field, Badge, Empty, Notice } from "../components.jsx";
@@ -27,11 +28,15 @@ export function AccountsPage({ data, run, notify }) {
   const [password, setPassword] = useState("");
   const [cookies, setCookies] = useState("");
   const [sourceAccountId, setSourceAccountId] = useState("");
+  const [proxyValue, setProxyValue] = useState("");
   const [busy, setBusy] = useState("");
   const [filter, setFilter] = useState("all");
   const [slotCount, setSlotCount] = useState(5);
   const [slotPrefix, setSlotPrefix] = useState("DreamFace profile");
+  const [slotProxies, setSlotProxies] = useState("");
   const [connectNewProfiles,setConnectNewProfiles]=useState(true);
+  const [gmailPrefix, setGmailPrefix] = useState("DreamFace Gmail");
+  const [gmailProxy, setGmailProxy] = useState("");
   const accounts = data.accounts.filter(
     (account) => filter === "all" || account.provider === filter,
   );
@@ -49,6 +54,9 @@ export function AccountsPage({ data, run, notify }) {
     setPassword("");
     setCookies("");
     setSourceAccountId("");
+    setProxyValue("");
+    setGmailPrefix("DreamFace Gmail");
+    setGmailProxy("");
   };
   const action = async (id, type, body = {}) => {
     setBusy(`${id}:${type}`);
@@ -68,6 +76,24 @@ export function AccountsPage({ data, run, notify }) {
     setBusy("");
     if (checked) notify(`Đã kiểm tra ${checked} profile DreamFace. Profile sẵn sàng sẽ tự được xoay vòng khi chọn Tự chọn.`);
   };
+  const createGmailAccount = async (event) => {
+    event.preventDefault();
+    setBusy("gmail-create");
+    const proxy = gmailProxy.trim();
+    const created = await run(() => api("/accounts/bulk-slots", {
+      provider: "dreamface",
+      count: 1,
+      namePrefix: gmailPrefix.trim() || "DreamFace Gmail",
+      proxies: proxy ? [proxy] : [],
+    }));
+    const account = created?.accounts?.[0];
+    if (account) {
+      const result = await run(() => api(`/accounts/${account.id}/gmail-signup`, { action: "start" }));
+      close();
+      if (result?.message) notify(result.email ? `Đã tạo email mẫu ${result.email}. ${result.message}` : result.message);
+    }
+    setBusy("");
+  };
   const submit = async (event) => {
     event.preventDefault();
     setBusy("save");
@@ -85,19 +111,27 @@ export function AccountsPage({ data, run, notify }) {
   const createSlots = async (event) => {
     event.preventDefault();
     setBusy("bulk-slots");
+    const proxies = slotProxies.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     const result = await run(() => api("/accounts/bulk-slots", {
       provider: "dreamface",
       count: Number(slotCount),
       namePrefix: slotPrefix,
+      proxies,
     }));
     if (result) {
       close();
-      notify(`Created ${result.created} profiles with saved sign-in details.`);
-      if(connectNewProfiles) {
-        for(const account of result.accounts) {
-          const connected=await action(account.id,"login");
-          if(connected?.status!=="ready")break;
+      notify(`Đã tạo ${result.created} profile DreamFace${proxies.length ? " và gán proxy." : "."}`);
+      if (connectNewProfiles) {
+        const connectionResults = [];
+        for (const account of result.accounts) {
+          // Each login opens the saved profile in its own visible browser window.
+          // Keep going when one profile needs CAPTCHA/OTP so every slot is prepared.
+          const connected = await action(account.id, "login");
+          connectionResults.push({ account, status: connected?.status || "failed" });
         }
+        const ready = connectionResults.filter(({ status }) => status === "ready").length;
+        const manual = connectionResults.filter(({ status }) => status !== "ready").map(({ account }) => account.name);
+        notify(`Đã mở và tự nhập ${connectionResults.length} profile DreamFace (${ready} sẵn sàng).${manual.length ? ` Cần hoàn tất CAPTCHA/xác minh trong: ${manual.join(", ")}.` : ""}`);
       }
     }
     setBusy("");
@@ -110,7 +144,7 @@ export function AccountsPage({ data, run, notify }) {
           <h1>Tài khoản của bạn.</h1>
           <p>Quản lý các profile AI trên máy này, gồm DreamFace để render và xoay vòng theo ngày.</p>
         </div>
-        <div className="account-heading-actions"><Button onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setModal({ type: "bulk-slots" }); }}><Plus size={16} /> Tạo profile xoay vòng</Button><Button
+        <div className="account-heading-actions"><Button onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setSlotProxies(""); setModal({ type: "bulk-slots" }); }}><Plus size={16} /> Tạo profile xoay vòng</Button><Button onClick={() => { setGmailPrefix("DreamFace Gmail"); setGmailProxy(""); setModal({ type: "gmail-create" }); }}><MailPlus size={16} /> Tạo Gmail & đăng nhập</Button><Button
           variant="primary"
           onClick={() => {
             setForm({
@@ -139,7 +173,8 @@ export function AccountsPage({ data, run, notify }) {
         </div>
         <div className="dreamface-pool-actions">
           <Button disabled={!dreamfaceAccounts.length || Boolean(busy)} busy={busy === "dreamface-all"} onClick={checkDreamfaceAll}><RefreshCw size={14} /> Kiểm tra tất cả</Button>
-          <Button variant="primary" onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setModal({ type: "bulk-slots" }); }}><Plus size={15} /> Tạo nhiều profile</Button>
+          <Button onClick={() => { setGmailPrefix("DreamFace Gmail"); setGmailProxy(""); setModal({ type: "gmail-create" }); }}><MailPlus size={15} /> Tạo Gmail</Button>
+          <Button variant="primary" onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setSlotProxies(""); setModal({ type: "bulk-slots" }); }}><Plus size={15} /> Tạo nhiều profile</Button>
         </div>
       </section>
       <div className="account-explainer">
@@ -223,11 +258,15 @@ export function AccountsPage({ data, run, notify }) {
                     : account.loginMethod === "cookie"
                       ? "Cookie"
                     : account.loginMethod === "credentials"
-                      ? "Email + máº­t kháº©u"
+                      ? "Email + mật khẩu"
                       : "Google"}
                 </span>
+                {account.proxy && <span><Globe2 size={11} /> Proxy {account.proxy}</span>}
               </div>
               <p className="account-message">{account.message}</p>
+              {account.provider === "dreamface" && account.gmailStatus && account.gmailStatus !== "idle" && (
+                <p className="small muted">DreamFace email: {account.gmailStatus === "ready" || account.gmailStatus === "created" ? "đã sẵn sàng" : account.gmailStatus === "verification" ? "đang chờ CAPTCHA/xác minh" : account.gmailStatus === "failed" ? "cần thử lại" : account.gmailStatus === "needs_login" ? "đã tự điền, chờ xác nhận" : "đang xử lý"}</p>
+              )}
               {account.provider === "dola" &&
                 account.status === "needs_login" && (
                   <p className="small muted">
@@ -251,6 +290,13 @@ export function AccountsPage({ data, run, notify }) {
                 >
                   <ExternalLink size={15} />
                 </Button>
+                {account.provider === "dreamface" && <Button
+                  disabled={Boolean(busy) || ["busy", "checking"].includes(account.status)}
+                  onClick={() => { setProxyValue(account.proxy || ""); setModal({ type: "proxy", account }); }}
+                >
+                  <Globe2 size={14} />
+                  {account.proxy ? "Sửa proxy" : "Thêm proxy"}
+                </Button>}
               </div>
               {data.capabilities?.googleProfileReuse && account.loginMethod === "google" && googleSources(account).length > 0 && (
                 <div className="card-actions">
@@ -276,6 +322,14 @@ export function AccountsPage({ data, run, notify }) {
                   <LogIn size={13} />
                   {account.provider === "dreamface" && account.hasCredentials ? "Connect saved profile" : "Đăng nhập"}
                 </button>
+                {account.provider === "dreamface" && <button
+                  className="text-button"
+                  disabled={Boolean(busy) || ["busy", "checking"].includes(account.status)}
+                   onClick={() => action(account.id, "gmail-signup", { action: ["ready", "created", "verification", "pending", "opening"].includes(account.gmailStatus) ? "check" : "start" })}
+                >
+                  <MailPlus size={13} />
+                   {account.gmailStatus === "ready" || account.gmailStatus === "created" ? "Mở DreamFace" : account.gmailStatus === "verification" || account.gmailStatus === "pending" || account.gmailStatus === "opening" ? "Kiểm tra DreamFace" : "Tạo Gmail & điền"}
+                </button>}
                 <button
                   className="text-button"
                   disabled={account.status === "busy"}
@@ -472,20 +526,57 @@ export function AccountsPage({ data, run, notify }) {
         </Modal>
       )}
       {modal?.type === "bulk-slots" && (
-        <Modal title="Create DreamFace profiles" onClose={close}>
+        <Modal title="Tạo nhiều profile DreamFace" onClose={close}>
           <form onSubmit={createSlots}>
             <Notice>
-              Each profile gets a random Gmail-formatted address and password, saved for future use. This creates sign-in details, not a Gmail inbox. DreamFace may ask you to verify registration in its window.
+              Mỗi profile được tạo một email Gmail dạng mẫu riêng và mật khẩu ngẫu nhiên, lưu cục bộ trong kho mã hóa. Bấm <strong>Tạo Gmail & điền</strong> để mở DreamFace và tự điền thông tin. App không tạo hộp thư Google thật; nếu DreamFace hiện CAPTCHA, hãy giải trực tiếp trong cửa sổ Chrome.
             </Notice>
             <div className="form-grid">
-              <Field label="Number of profiles"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
-              <Field label="Profile name prefix"><input maxLength="80" value={slotPrefix} onChange={(event) => setSlotPrefix(event.target.value)} /></Field>
+              <Field label="Số profile muốn tạo"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
+              <Field label="Tiền tố tên profile"><input maxLength="80" value={slotPrefix} onChange={(event) => setSlotPrefix(event.target.value)} /></Field>
             </div>
-            <label className="check-field"><input type="checkbox" checked={connectNewProfiles} onChange={event=>setConnectNewProfiles(event.target.checked)}/> Start registration now</label>
-            <Field label="Render selection" hint="Auto uses connected profiles and prioritizes those not used today. Registration pauses when DreamFace asks for verification; use Connect saved profile to continue.">
-              <input value="Daily rotation · profile ready" readOnly />
+            <Field label="Proxy cho profile (tùy chọn)" hint="Một dòng dùng chung cho tất cả profile; nhiều dòng phải đúng bằng số profile. Dạng HTTP/HTTPS/SOCKS5 host:port, giống cấu hình Dola.">
+              <textarea rows="3" value={slotProxies} onChange={(event) => setSlotProxies(event.target.value)} placeholder={"http://127.0.0.1:8080\nhttp://127.0.0.1:8081"} />
             </Field>
-            <div className="modal-actions"><Button type="button" onClick={close}>Cancel</Button><Button variant="primary" busy={busy === "bulk-slots"}><Plus size={15} /> Create {slotCount} profiles</Button></div>
+            <label className="check-field"><input type="checkbox" aria-label="Start registration now" checked={connectNewProfiles} onChange={event=>setConnectNewProfiles(event.target.checked)}/> Mở kết nối DreamFace ngay</label>
+            <Field label="Chọn profile khi render" hint="Tự chọn sẽ ưu tiên profile đã kết nối và chưa dùng trong ngày. Proxy được gắn cố định theo từng profile.">
+              <input value="Xoay vòng theo ngày · profile sẵn sàng" readOnly />
+            </Field>
+            <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" aria-label={`Create ${slotCount} profiles`} busy={busy === "bulk-slots"}><Plus size={15} /> Tạo {slotCount} profile</Button></div>
+          </form>
+        </Modal>
+      )}
+      {modal?.type === "gmail-create" && (
+        <Modal title="Tạo Gmail mẫu & đăng nhập DreamFace" onClose={close}>
+          <form onSubmit={createGmailAccount}>
+            <Notice>
+              App sẽ tạo một email Gmail dạng mẫu không trùng các profile cũ, lưu mật khẩu ngẫu nhiên an toàn rồi mở DreamFace để tự điền và gửi đăng nhập/đăng ký. App không tạo Gmail thật. Nếu DreamFace yêu cầu CAPTCHA, cửa sổ Chrome sẽ giữ nguyên để bạn giải; sau đó bấm “Kiểm tra DreamFace”.
+            </Notice>
+            <Field label="Tên profile">
+              <input autoFocus maxLength="80" value={gmailPrefix} onChange={(event) => setGmailPrefix(event.target.value)} placeholder="DreamFace Gmail" />
+            </Field>
+            <Field label="Proxy riêng (tùy chọn)" hint="Bỏ trống để chạy bằng IP máy. Nhập HTTP/HTTPS/SOCKS5 dạng host:port giống luồng tài khoản Dola; proxy sẽ gắn cố định cho profile này.">
+              <input value={gmailProxy} onChange={(event) => setGmailProxy(event.target.value)} placeholder="http://127.0.0.1:8080" />
+            </Field>
+            <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" busy={busy === "gmail-create"}><MailPlus size={15} /> Tạo email & mở DreamFace</Button></div>
+          </form>
+        </Modal>
+      )}
+      {modal?.type === "proxy" && (
+        <Modal title={`Proxy · ${modal.account.name}`} onClose={close}>
+          <form onSubmit={async (event) => {
+            event.preventDefault();
+            const result = await run(() => api(`/accounts/${modal.account.id}`, { proxy: proxyValue }, "PATCH"));
+            if (result) {
+              notify(proxyValue.trim() ? "Đã lưu proxy. Kiểm tra lại phiên trước khi render." : "Đã bỏ proxy khỏi profile.");
+              close();
+            }
+          }}>
+            <Field label="Địa chỉ proxy" hint="HTTP/HTTPS/SOCKS5 dạng host:port. Proxy có tài khoản/mật khẩu trong URL chưa được hỗ trợ bởi profile Chrome hiện tại.">
+              <input autoFocus value={proxyValue} onChange={(event) => setProxyValue(event.target.value)} placeholder="http://127.0.0.1:8080" />
+            </Field>
+            <Notice>Đổi proxy sẽ đóng phiên trình duyệt hiện tại của profile và chuyển trạng thái về cần kiểm tra; dữ liệu đăng nhập vẫn được giữ.</Notice>
+            <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" busy={Boolean(busy)}><Globe2 size={15} /> Lưu proxy</Button></div>
           </form>
         </Modal>
       )}

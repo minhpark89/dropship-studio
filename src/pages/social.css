@@ -407,6 +407,14 @@
   background: #bcf5670b;
   margin-bottom: 13px;
 }
+.social-export-box.is-error {
+  border-color: #7a493b;
+  background: #7a493b18;
+}
+.social-post-publication-error {
+  color: #ffd1bf !important;
+  overflow-wrap: anywhere;
+}
 .social-export-box strong {
   color: #d9e9d3;
   font-size: 12px;
@@ -442,6 +450,24 @@
   flex-wrap: wrap;
   margin-top: 7px;
 }
+
+.social-distribution-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 16px 0 10px;
+  padding: 15px 17px;
+  border: 1px solid #385879;
+  border-radius: 14px;
+  background: linear-gradient(110deg, #1b3554, #111f34 68%);
+}
+.social-distribution-intro h2 { margin: 5px 0 5px; color: #f1f6ff; font-size: 18px; letter-spacing: -.025em; }
+.social-distribution-intro p { max-width: 720px; margin: 0; color: #9db1ca; font-size: 12px; line-height: 1.5; }
+.social-kicker { color: #ffb477; font-size: 10px; font-weight: 800; letter-spacing: .14em; }
+.social-workflow-steps { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 7px; min-width: 310px; }
+.social-workflow-steps span { display: flex; align-items: center; gap: 7px; padding: 8px 9px; color: #c7d7eb; border: 1px solid #294463; border-radius: 8px; background: #0f1d32; font-size: 10px; white-space: nowrap; }
+.social-workflow-steps b { color: #ffb477; font-size: 10px; }
 
 .meta-management {
   margin: 18px 0;
@@ -533,6 +559,11 @@
 .meta-group-panel h3 { font-size: 13px; color: #e4eee5; }
 .meta-token-list,
 .meta-page-mini-list { padding: 4px 12px 10px; }
+.meta-list-toolbar { display: flex; align-items: center; gap: 8px; padding: 9px 12px 4px; }
+.meta-list-toolbar input { min-width: 0; flex: 1; min-height: 31px; padding: 6px 8px; color: #dce9f7; border: 1px solid #294463; border-radius: 7px; background: #0f1d32; font-size: 11px; }
+.meta-list-toolbar span { color: #8da4c1; font-size: 10px; white-space: nowrap; }
+.meta-token-list,
+.meta-page-mini-list { max-height: 310px; overflow: auto; }
 .meta-token-row {
   min-width: 0;
   padding: 10px 2px;
@@ -596,6 +627,8 @@
   color: #ffb27c;
 }
 @media (max-width: 900px) {
+  .social-distribution-intro { align-items: flex-start; flex-direction: column; }
+  .social-workflow-steps { width: 100%; min-width: 0; }
   .meta-management-heading { flex-direction: column; }
   .meta-management-actions { justify-content: flex-start; }
   .meta-management-grid,

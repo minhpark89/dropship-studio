@@ -183,6 +183,83 @@ test("Local server rejects cross-site and Host spoofing requests; cookie/passwor
   }
 });
 
+test("DreamFace bulk account setup accepts quantity and per-profile proxies, and proxy edits persist", async () => {
+  const studio = await startServer({
+    port: 0,
+    dataDir: path.resolve(".verification", `dreamface-accounts-${randomUUID()}`),
+  });
+  try {
+    const response = await fetch(`${studio.address}/api/accounts/bulk-slots`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "dreamface",
+        count: 2,
+        namePrefix: "Proxy slot",
+        proxies: ["127.0.0.1:8080", "socks5://127.0.0.1:1080"],
+      }),
+    });
+    assert.equal(response.status, 201);
+    const created = await response.json();
+    assert.equal(created.created, 2);
+    assert.deepEqual(created.accounts.map((account) => account.proxy), [
+      "http://127.0.0.1:8080",
+      "socks5://127.0.0.1:1080",
+    ]);
+    assert.ok(created.accounts.every((account) => account.status === "needs_login"));
+    const noProxyResponse = await fetch(`${studio.address}/api/accounts/bulk-slots`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "dreamface", count: 1, namePrefix: "No proxy" }),
+    });
+    assert.equal(noProxyResponse.status, 201);
+    assert.equal((await noProxyResponse.json()).accounts[0].proxy, "");
+    const changed = await fetch(`${studio.address}/api/accounts/${created.accounts[0].id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proxy: "https://proxy.example:9443" }),
+    });
+    assert.equal(changed.status, 200);
+    const account = await changed.json();
+    assert.equal(account.proxy, "https://proxy.example:9443");
+    const publicState = await (await fetch(`${studio.address}/api/state`)).json();
+    assert.equal(publicState.accounts.find((item) => item.id === account.id).proxy, "https://proxy.example:9443");
+    assert.doesNotMatch(JSON.stringify(publicState), /viralstudio\.[a-f0-9]+@gmail\.com.*Aa7!/i);
+  } finally {
+    await studio.close();
+  }
+});
+
+test("Gmail signup route is limited to DreamFace profiles", async () => {
+  const studio = await startServer({
+    port: 0,
+    dataDir: path.resolve(".verification", `gmail-route-${randomUUID()}`),
+  });
+  try {
+    const created = await fetch(`${studio.address}/api/accounts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Dola account",
+        provider: "dola",
+        loginMethod: "google",
+        email: "owner@example.com",
+      }),
+    });
+    const account = await created.json();
+    const response = await fetch(`${studio.address}/api/accounts/${account.id}/gmail-signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "start" }),
+    });
+    assert.equal(response.status, 409);
+    const body = await response.json();
+    assert.equal(body.code, "GMAIL_DREAMFACE_ONLY");
+  } finally {
+    await studio.close();
+  }
+});
+
 test("Research image hosts are allowed by the local UI content policy", async () => {
   const studio = await startServer({
     port: 0,

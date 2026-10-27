@@ -9,6 +9,20 @@ const root = path.resolve(".verification", `workspaces-ui-${Date.now()}`);
 await fs.mkdir(root, { recursive: true });
 const store = new Store(root);
 const project = store.createProject("Workspace split QA");
+store.add("researchResults", {
+  projectId: project.id,
+  topic: "Research screen smoke test",
+  niche: "General news",
+  language: "en",
+  headline: "Research screen smoke test",
+  angle: "A saved result must keep the workspace visible.",
+  script: "The saved result keeps the Research workspace available.",
+  articles: [],
+  imageQueries: [],
+  imageSearchResults: [],
+  imageMediaIds: [],
+  warnings: [],
+});
 store.add("socialPages", { name: "News & Product QA", platform: "facebook", externalId: "987654321", url: "https://www.facebook.com/qa", timezone: "Asia/Bangkok", notes: "", archived: false, revision: 1 });
 const studio = await startServer({ port: 0, dataDir: root });
 const browser = await chromium.launch({ headless: true });
@@ -20,6 +34,10 @@ const report = { checks: [], errors, url: studio.address };
 try {
   await page.goto(studio.address);
   await page.locator(".page").first().waitFor();
+  await page.getByRole("button", { name: "Research & News", exact: true }).click();
+  await page.locator(".research-page").waitFor();
+  assert.equal(errors.length, 0, errors.join("\n"));
+  report.checks.push("Research & News stays visible with an existing result and has no blank-screen error");
   await page.getByRole("button", { name: "Channels & Tokens", exact: true }).click();
   await page.locator(".pages-hub").waitFor();
   await page.getByRole("button", { name: "Thêm Page", exact: true }).first().click();
@@ -29,6 +47,12 @@ try {
   await pageDialog.waitFor({ state: "hidden" });
   await page.locator(".hub-list-row").filter({ hasText: "Product & News QA" }).waitFor();
   report.checks.push("Channels workspace opens separately and creates local Page records");
+  const localPanel = await page.locator(".pages-local-panel").boundingBox();
+  assert.ok(localPanel && localPanel.y + localPanel.height <= 1000, `Page local panel is clipped: ${JSON.stringify(localPanel)}`);
+  await page.locator(".pages-tabs button").filter({ hasText: "Kho b" }).click();
+  await page.locator(".pages-distribution-view").waitFor();
+  assert.equal(await page.locator(".pages-render-rules").count(), 1);
+  report.checks.push("Page local panel fits the viewport and the Content warehouse tab exposes render rules");
   await page.getByRole("button", { name: "Content Studio", exact: true }).click();
   await page.locator(".content-hub").waitFor();
   await page.getByRole("button", { name: "Content News", exact: true }).click();
@@ -61,7 +85,10 @@ try {
   await page.locator(".render-mode-tabs button").nth(0).click();
   assert.equal(await page.locator(".production-panel").count(), 1);
   assert.equal(await page.locator(".editor-heading .eyebrow").innerText(), "NEWS RENDER");
-  report.checks.push("Render workspace switches between News and Product without leaving the project");
+  assert.equal(await page.getByLabel("Font / style").count(), 1);
+  assert.equal(await page.getByLabel("Link bài news (tuỳ chọn)").count(), 1);
+  assert.deepEqual(await page.getByLabel("Font / style").locator("option").allTextContents(), ["News chuẩn · Barlow Condensed", "Viral mạnh · Anton + Barlow", "Viral sạch · Be Vietnam Pro"]);
+  report.checks.push("Render workspace switches between News and Product and exposes the direct-link and three style presets");
   await page.getByRole("button", { name: "Tài khoản", exact: true }).click();
   await page.getByRole("button", { name: "Tạo profile xoay vòng" }).click();
   const slots = page.locator('[role="dialog"]');

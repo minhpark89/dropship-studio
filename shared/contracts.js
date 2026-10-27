@@ -187,5 +187,5 @@ export const accountSchema = z.object({
   provider: z.enum(["dola", "flow", "dreamface"]),
   loginMethod: z.enum(["google", "apple", "credentials", "cookie"]).default("google"),
   email: z.string().max(200).default(""),
-  proxy: z.string().max(500).default(""),
+  proxy: z.string().trim().max(500).default(""),
 });
