@@ -171,6 +171,35 @@ test("LLM connection test calls the saved model without exposing the key", async
   assert.equal(JSON.stringify(body).includes("secret-token"), false);
 });
 
+test("LLM connection test uses and saves endpoint, model and API key currently in the form", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ headline: "Unsaved connection", angle: "", script: "", imageQueries: [] }) } }] }), {
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const { request, store } = await fixture({
+    fetchImpl,
+    llm: { enabled: true, apiKey: "old-key", endpoint: "https://old.example/v1", model: "old-model" },
+  });
+  const response = await request("/api/settings/llm/test", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endpoint: "https://new.example/v1/chat/completions", apiKey: "new-key", model: "new-model", timeoutSeconds: 30 }),
+  });
+  assert.equal(response.status, 200);
+  const body = await json(response);
+  assert.equal(body.model, "new-model");
+  assert.equal(calls[0].url, "https://new.example/v1/chat/completions");
+  assert.equal(calls[0].options.headers.authorization, "Bearer new-key");
+  assert.equal(JSON.parse(calls[0].options.body).model, "new-model");
+  assert.equal(store.state.settings.llm.apiKey, "new-key");
+  assert.equal(store.state.settings.llm.endpoint, "https://new.example/v1");
+  assert.equal(store.state.settings.llm.model, "new-model");
+  assert.equal(store.state.settings.llm.enabled, true);
+});
+
 test("research can call a local OpenAI-compatible endpoint without an API key", async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {

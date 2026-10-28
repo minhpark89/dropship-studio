@@ -45,6 +45,8 @@ export class Store extends EventEmitter {
       productionBatches: [],
       settings: {
         concurrency: 2,
+        renderConcurrency: 1,
+        renderThreads: 4,
         queuePaused: false,
         pollSeconds: 5,
         maxWaitMinutes: 30,
@@ -129,6 +131,8 @@ export class Store extends EventEmitter {
     }
     const defaults = {
       concurrency: 2,
+      renderConcurrency: 1,
+      renderThreads: 4,
       queuePaused: false,
       pollSeconds: 5,
       maxWaitMinutes: 30,

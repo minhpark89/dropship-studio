@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import { Badge, Button, Empty, Field, Modal, Notice } from "../components.jsx";
+import { isPublishableVideo } from "../../shared/output-media.js";
 
 const statusNames = {
   draft: "Bản nháp",
@@ -127,11 +128,19 @@ function postWorkflowStage(post) {
   return post.firstComment?.trim() ? "ready" : "needs-comment";
 }
 
+const workflowStageLabels = {
+  "needs-content": "Chưa có Content",
+  "needs-website": "Chưa đăng website",
+  "needs-comment": "Thiếu first comment",
+  ready: "Sẵn sàng lên lịch",
+};
+
 export function ContentPage({ data, project, notify, navigate }) {
   const [pages, setPages] = useState(data.socialPages || []);
   const [posts, setPosts] = useState(data.socialPosts || []);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [selectedPostIds, setSelectedPostIds] = useState([]);
   const [modal, setModal] = useState(null);
   const [previewMedia, setPreviewMedia] = useState(null);
   const [busy, setBusy] = useState("");
@@ -143,11 +152,15 @@ export function ContentPage({ data, project, notify, navigate }) {
     setPosts(data.socialPosts || []);
   }, [data.socialPages, data.socialPosts]);
 
+  useEffect(() => {
+    setSelectedPostIds([]);
+  }, [project.id, filter, search]);
+
   const media = useMemo(() => (data.media || [])
     .filter((item) => (item.projectId === project.id || !item.projectId) && ["image", "video"].includes(item.kind))
     .slice()
     .sort((left, right) => Number(right.generated) - Number(left.generated) || new Date(right.createdAt || 0) - new Date(left.createdAt || 0)), [data.media, project.id]);
-  const renderedVideos = media.filter((item) => item.kind === "video" && item.generated);
+  const renderedVideos = media.filter((item) => isPublishableVideo(item, data.jobs));
   const projectResearch = (data.researchResults || []).filter(result => result.projectId === project.id);
   const unassignedVideos = useMemo(() => {
     const coverage = new Map();
@@ -194,6 +207,9 @@ export function ContentPage({ data, project, notify, navigate }) {
     "needs-website": projectPostItems.filter((post) => postWorkflowStage(post) === "needs-website").length,
     "needs-comment": projectPostItems.filter((post) => postWorkflowStage(post) === "needs-comment").length,
   };
+  const selectedPosts = projectPosts.filter((post) => selectedPostIds.includes(post.id));
+  const bulkPosts = selectedPosts.length ? selectedPosts : projectPosts.filter((post) => post.contentType === "news");
+  const allVisibleSelected = projectPosts.length > 0 && projectPosts.every((post) => selectedPostIds.includes(post.id));
 
   const action = async (key, operation, message) => {
     if (busy) return null;
@@ -305,8 +321,64 @@ export function ContentPage({ data, project, notify, navigate }) {
     if (result) setPosts((current) => current.map((item) => item.id === result.id ? result : item));
   };
   const regeneratePost = async (post) => {
-    const result = await action(`regenerate:${post.id}`, () => api(`/content/posts/${post.id}/regenerate`, {}), "LLM đã tạo lại Content News. Hãy kiểm tra bài và publish website.");
-    if (result) setPosts(current => current.map(item => item.id === result.id ? result : item));
+    const result = await action(`regenerate:${post.id}`, () => api(`/content/posts/${post.id}/regenerate`, {}));
+    if (result) {
+      setPosts(current => current.map(item => item.id === result.id ? result : item));
+      notify(result.automationError ? "LLM chưa tạo được bản mới. Content cũ vẫn được giữ nguyên; hãy kiểm tra LLM trong Settings rồi thử lại." : "LLM đã tạo lại Content News. Hãy kiểm tra bài và publish website.", result.automationError ? "error" : undefined);
+    }
+  };
+  const togglePostSelection = (postId) => {
+    setSelectedPostIds((current) => current.includes(postId) ? current.filter((id) => id !== postId) : [...current, postId]);
+  };
+  const toggleAllVisible = () => {
+    setSelectedPostIds(allVisibleSelected ? [] : projectPosts.map((post) => post.id));
+  };
+  const bulkRegenerate = async () => {
+    const targets = bulkPosts.filter((post) => post.contentType === "news");
+    if (!targets.length || busy) return;
+    setBusy("bulk-regenerate");
+    let succeeded = 0;
+    let failed = 0;
+    try {
+      for (const post of targets) {
+        try {
+          const result = await api(`/content/posts/${post.id}/regenerate`, {});
+          setPosts((current) => current.map((item) => item.id === result.id ? result : item));
+          if (result.automationError) failed += 1;
+          else succeeded += 1;
+        } catch (error) {
+          failed += 1;
+          notify(`${post.title}: ${error.message}`, "error");
+        }
+      }
+    } finally {
+      setBusy("");
+      setSelectedPostIds([]);
+    }
+    notify(`Đã xử lý ${targets.length} bài bằng LLM: ${succeeded} thành công${failed ? `, ${failed} lỗi (content cũ được giữ)` : ""}.`, failed ? "error" : undefined);
+  };
+  const bulkPublishWebsite = async () => {
+    const targets = bulkPosts.filter((post) => post.contentType === "news" && post.articleBody?.trim() && postWorkflowStage(post) === "needs-website" && !post.automationError);
+    if (!targets.length || busy) return;
+    setBusy("bulk-website");
+    let published = 0;
+    let failed = 0;
+    try {
+      for (const post of targets) {
+        try {
+          const result = await api(`/content/posts/${post.id}/website`, { revision: post.revision });
+          setPosts((current) => current.map((item) => item.id === result.id ? result : item));
+          published += 1;
+        } catch (error) {
+          failed += 1;
+          notify(`${post.title}: ${error.message}`, "error");
+        }
+      }
+    } finally {
+      setBusy("");
+      setSelectedPostIds([]);
+    }
+    notify(`Đã đăng ${published}/${targets.length} bài lên website${failed ? `, ${failed} lỗi` : ""}.`, failed ? "error" : undefined);
   };
   const generateInEditor = async () => {
     const targetForm = formRef.current;
@@ -332,13 +404,14 @@ export function ContentPage({ data, project, notify, navigate }) {
     {!activePages.length && <Notice>You can write and save drafts now. Assign a Page before approval. <button className="inline-link" onClick={() => navigate?.("pages")}>Open Channels</button></Notice>}
         {unassignedVideoGroups.length > 0 && <section className="content-video-inbox"><div className="hub-panel-heading"><div><span className="hub-kicker">READY FROM RENDER</span><h2>{unassignedVideoGroups.length} video group(s) cần tạo Content</h2><p>News sẽ tạo bài, đăng website và gắn URL chính xác vào first comment.</p></div></div>{unassignedVideoGroups.map(({ video, type, count }) => <article key={video.id}><Video size={24}/><div><strong>{video.production?.title || video.name}</strong><p>{type === "news" ? `News · bài viết website + first comment${count > 1 ? ` · ${count} bản render` : ""}` : `Product · first comment${count > 1 ? ` · ${count} bản render` : ""}`}</p></div><Button variant="primary" busy={busy===`write:${video.id}` || busy===`website:${video.id}`} disabled={Boolean(busy)} onClick={()=>writeForVideo(video)}><Sparkles size={15}/>{type === "news" ? "Tạo bài + đăng website" : "Tạo first comment"}</Button></article>)}</section>}
     <div className="content-toolbar"><div className="content-filter-tabs">{[["all", "Tất cả"], ["news", "News"], ["product", "Product"], ["needs-content", "Cần viết"], ["needs-website", "Cần đăng web"], ["needs-comment", "Thiếu first comment"], ["ready", "Đủ điều kiện"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}<b>{counts[value]}</b></button>)}</div><input aria-label="Tìm Content" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm tiêu đề, caption hoặc first comment…" /></div>
+    {filter === "needs-website" && projectPosts.length > 0 && <div className="content-bulk-toolbar"><label className="content-select-toggle"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} /> <span>Select all {projectPosts.length} items</span></label><span className="content-bulk-hint">{selectedPosts.length ? `Selected ${selectedPosts.length} items` : "No selection = process all filtered News items"}</span><div className="content-bulk-actions"><Button busy={busy === "bulk-regenerate"} disabled={Boolean(busy)} onClick={bulkRegenerate}><Sparkles size={14} /> Regenerate LLM {selectedPosts.length ? `(${selectedPosts.length})` : "all"}</Button><Button variant="primary" busy={busy === "bulk-website"} disabled={Boolean(busy)} onClick={bulkPublishWebsite}><Send size={14} /> Publish website {selectedPosts.length ? `(${selectedPosts.length})` : "all"}</Button></div></div>}
     {projectPosts.length ? <div className="content-list">{projectPosts.map((post) => {
       const page = pages.find((item) => item.id === post.pageId);
       const attached = media.find((item) => item.id === post.mediaIds?.[0]);
       const articleImageCount = (post.articleBody?.match(/!\[[^\]]*\]\(https?:\/\//g) || []).length;
-      return <article className="content-card" key={post.id}>
+      return <article className={`content-card${filter === "needs-website" && selectedPostIds.includes(post.id) ? " selected" : ""}`} key={post.id}>
         <div className="content-card-media"><PreviewMedia media={attached} onOpen={setPreviewMedia} /><span className="content-card-type"><TypeBadge type={post.contentType || "product"} /></span>{attached?.kind === "video" && attached.generated && <span className="content-render-badge">VIDEO RENDER</span>}</div>
-        <div className="content-card-body"><div className="content-card-top"><div><div className="content-card-kicker">{page?.name || "Chưa gán Page"} · {post.updatedAt ? new Date(post.updatedAt).toLocaleDateString("vi-VN") : "mới"}</div><h3>{post.title}</h3></div><Badge status={post.status} /></div>
+        <div className="content-card-body"><div className="content-card-top"><div>{filter === "needs-website" && <label className="content-card-select"><input type="checkbox" checked={selectedPostIds.includes(post.id)} onChange={() => togglePostSelection(post.id)} /> <span>Select</span></label>}<div className="content-card-kicker">{page?.name || "Chưa gán Page"} · {post.updatedAt ? new Date(post.updatedAt).toLocaleDateString("vi-VN") : "mới"}</div><h3>{post.title}</h3></div><div className="content-card-statuses"><Badge status={post.status} /><span className={`content-workflow-status ${postWorkflowStage(post)}`}>{workflowStageLabels[postWorkflowStage(post)]}</span></div></div>
           {post.caption && <p className="content-caption">{post.caption}</p>}
           <div className="content-meta-row"><span><MessageCircle size={13} /> {post.firstComment ? "Có first comment" : "Chưa có first comment"}</span>{post.linkUrl && <a href={post.linkUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> {post.linkLabel || "Mở link"}</a>}{post.sourceUrl && <a href={post.sourceUrl} target="_blank" rel="noreferrer"><Newspaper size={13} /> Nguồn</a>}</div>
           {post.automationError && <div className="content-automation-error"><span><strong>News automation error</strong>{post.automationError}</span><Button onClick={() => regeneratePost(post)} busy={busy === `regenerate:${post.id}`} disabled={Boolean(busy)}><RefreshCw size={14} /> Regenerate with LLM</Button></div>}
@@ -356,7 +429,7 @@ export function ContentPage({ data, project, notify, navigate }) {
       <div hidden={modal.post.contentType!=="news"}><Field label="Research source" hint="Used for the news article and source citations."><select name="researchId" defaultValue={modal.post.researchId || ""}><option value="">Select research for this video</option>{projectResearch.map(result=><option key={result.id} value={result.id}>{result.headline}</option>)}</select></Field>
       <Field label="Full article (English)" hint="News articles are saved with the post and exported as article.md. Product content does not need an article."><textarea name="articleBody" rows={modal.post.contentType==="news"?12:2} maxLength={60000} defaultValue={modal.post.articleBody || ""} placeholder="Generate or paste the full website article…"/></Field></div>
       <div className="form-grid"><Field label="Tiêu đề"><input name="title" required maxLength={200} defaultValue={modal.post.title} autoFocus placeholder="Ví dụ: 3 thay đổi đáng chú ý hôm nay" /></Field><Field label="Page xuất bản"><select name="pageId" defaultValue={modal.post.pageId}><option value="">Assign a Page later</option>{pages.filter((page) => !page.archived || page.id === modal.post.pageId).map((page) => <option key={page.id} value={page.id}>{page.name}{page.archived ? " (đã lưu trữ)" : ""}</option>)}</select></Field><Field label="Nhóm Page"><select name="pageGroupId" defaultValue={modal.post.pageGroupId || ""}><option value="">Không chọn nhóm</option>{(data.settings?.meta?.pageGroups || []).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field><Field label="Pool token"><select name="tokenGroupId" defaultValue={modal.post.tokenGroupId || ""}><option value="">Tự chọn token khỏe</option>{(data.settings?.meta?.tokenGroups || []).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field></div>
-      <div className="content-form-columns"><div><Field label="Caption"><textarea name="caption" rows="8" maxLength={20000} defaultValue={modal.post.caption} placeholder="Write the main caption…" /></Field><Field label="First comment" hint="Use this for a store, affiliate, or article link. It is preserved in the handoff package."><textarea name="firstComment" rows="5" maxLength={10000} defaultValue={modal.post.firstComment} placeholder="Read more here…" /></Field></div><div><Field label="Rendered video from Library" hint={renderedVideos.length ? `${renderedVideos.length} rendered video(s) available; newest first.` : "No rendered video yet; render from Video Studio or Research first."}><select name="mediaId" defaultValue={modal.post.mediaIds?.[0] || ""}><option value="">No media attached</option>{renderedVideos.length > 0 && <option disabled>— RENDERED VIDEOS —</option>}{renderedVideos.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.duration ? `${Number(item.duration).toFixed(1)}s` : "video"}</option>)}{media.some((item) => !renderedVideos.includes(item)) && <option disabled>— OTHER MEDIA —</option>}{media.filter((item) => !renderedVideos.includes(item)).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kind}</option>)}</select></Field><div className="content-link-box"><div className="hub-kicker">LINK &amp; SOURCE</div><Field label="Store / article link"><input name="linkUrl" type="url" defaultValue={modal.post.linkUrl} placeholder={modal.post.contentType === "news" ? contentDefaults.articleWebsiteUrl || "https://article.example.com…" : contentDefaults.storeUrl || "https://store.example.com…"} /></Field><Field label="Link label"><input name="linkLabel" maxLength={160} defaultValue={modal.post.linkLabel} placeholder={modal.post.contentType === "news" ? contentDefaults.articleLinkLabel || "Read the full article" : contentDefaults.storeLinkLabel || "Shop now"} /></Field><Field label="Article cover image" hint="Optional public HTTPS image used by the website article and social preview."><input name="coverImageUrl" type="url" defaultValue={modal.post.coverImageUrl || ""} placeholder="https://images.example.com/news.jpg" /></Field><Field label="Article source" hint="Keep the source URL for news verification before publishing."><input name="sourceUrl" type="url" defaultValue={modal.post.sourceUrl} placeholder="https://news.example.com/article" /></Field></div></div></div>
+      <div className="content-form-columns"><div><Field label="Caption"><textarea name="caption" rows="8" maxLength={20000} defaultValue={modal.post.caption} placeholder="Write the main caption…" /></Field><Field label="First comment" hint="Use this for a store, affiliate, or article link. It is preserved in the handoff package."><textarea name="firstComment" rows="5" maxLength={10000} defaultValue={modal.post.firstComment} placeholder="Read more here…" /></Field></div><div><Field label="Rendered video from Library" hint={renderedVideos.length ? `${renderedVideos.length} rendered video(s) available; newest first.` : "No rendered video yet; render from Video Studio or Research first."}><select name="mediaId" defaultValue={modal.post.mediaIds?.[0] || ""}><option value="">No media attached</option>{renderedVideos.length > 0 && <option disabled>— RENDERED VIDEOS —</option>}{renderedVideos.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.duration ? `${Number(item.duration).toFixed(1)}s` : "video"}</option>)}{media.some((item) => !renderedVideos.includes(item) && !(item.kind === "video" && !isPublishableVideo(item, data.jobs))) && <option disabled>— OTHER MEDIA —</option>}{media.filter((item) => !renderedVideos.includes(item) && !(item.kind === "video" && !isPublishableVideo(item, data.jobs))).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kind}</option>)}</select></Field><div className="content-link-box"><div className="hub-kicker">LINK &amp; SOURCE</div><Field label="Store / article link"><input name="linkUrl" type="url" defaultValue={modal.post.linkUrl} placeholder={modal.post.contentType === "news" ? contentDefaults.articleWebsiteUrl || "https://article.example.com…" : contentDefaults.storeUrl || "https://store.example.com…"} /></Field><Field label="Link label"><input name="linkLabel" maxLength={160} defaultValue={modal.post.linkLabel} placeholder={modal.post.contentType === "news" ? contentDefaults.articleLinkLabel || "Read the full article" : contentDefaults.storeLinkLabel || "Shop now"} /></Field><Field label="Article cover image" hint="Optional public HTTPS image used by the website article and social preview."><input name="coverImageUrl" type="url" defaultValue={modal.post.coverImageUrl || ""} placeholder="https://images.example.com/news.jpg" /></Field><Field label="Article source" hint="Keep the source URL for news verification before publishing."><input name="sourceUrl" type="url" defaultValue={modal.post.sourceUrl} placeholder="https://news.example.com/article" /></Field></div></div></div>
       <div className="form-grid"><Field label="Trạng thái"><select name="status" defaultValue={modal.post.status}><option value="draft">Bản nháp</option><option value="ready">Đã duyệt</option><option value="scheduled">Có lịch</option></select></Field><Field label="Thời gian dự kiến"><input name="scheduledAt" type="datetime-local" defaultValue={localDateInput(modal.post.scheduledAt)} /></Field></div><Field label="Ghi chú nội bộ"><textarea name="notes" rows="2" maxLength={5000} defaultValue={modal.post.notes} placeholder="Ghi chú cho team…" /></Field><Notice>Content chỉ ghi nhận kế hoạch và tạo gói handoff. Việc publish Meta vẫn đi qua preflight và tài khoản/token do bạn sở hữu.</Notice><div className="modal-actions"><Button type="button" onClick={() => setModal(null)}>Hủy</Button><Button variant="primary" busy={busy === "post:new" || busy === `post:${modal.post.id}`}>{modal.mode === "edit" ? "Lưu Content" : "Tạo bản nháp"} <Send size={15} /></Button></div>
     </form></Modal>}
   </div>;

@@ -65,6 +65,7 @@ export function EditorPage({ data, project, run, notify, navigate, renderKind = 
   const [name, setName] = useState(`${project.name} - ${renderKind === "product" ? "product" : "news"}`);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [autoCreateContent, setAutoCreateContent] = useState(true);
   const [saved, setSaved] = useState(true);
   const duration = durationOf(timeline);
   const assets = data.media.filter(
@@ -257,7 +258,7 @@ export function EditorPage({ data, project, run, notify, navigate, renderKind = 
     setExporting(true);
     if (await save()) {
       const exportTimeline = fast ? { ...timeline, resolution: 480, quality: "draft", fps: 30 } : timeline;
-      const result = await run(() => api("/jobs/render", { projectId: project.id, name, timeline: exportTimeline }));
+      const result = await run(() => api("/jobs/render", { projectId: project.id, name, timeline: exportTimeline, production: { contentType: renderKind, title: name, autoCreateContent } }));
       if (result) {
         notify(fast ? "Đã thêm render nhanh vào hàng đợi." : "Đã thêm tác vụ xuất video.");
         setModal(null);
@@ -1000,6 +1001,7 @@ export function EditorPage({ data, project, run, notify, navigate, renderKind = 
                 <option value="high">Cao · File lớn hơn</option>
               </select>
             </Field>
+            <label className="toggle-field editor-auto-content"><input type="checkbox" checked={autoCreateContent} onChange={(event) => setAutoCreateContent(event.target.checked)} /><span><strong>Tự tạo Content sau khi render</strong><small>{autoCreateContent ? "LLM sẽ tạo Content cho đúng loại video sau khi xuất xong." : "Chỉ xuất video; có thể tạo Content sau trong Content Studio."}</small></span></label>
             <Notice>
               {timeline.clips.length} clip · {timecode(duration)} ·{" "}
               {timeline.ratio}

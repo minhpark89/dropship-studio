@@ -112,6 +112,8 @@ test("news render automation leaves a Content error that can be regenerated", as
   assert.equal(regenerated.id, post.id);
   assert.equal(regenerated.automationStatus, "error");
   assert.match(regenerated.automationError, /LLM temporarily unavailable/);
+  assert.equal(regenerated.title, post.title);
+  assert.equal(regenerated.articleBody, post.articleBody);
   assert.match(regenerated.firstComment, /https:\/\/news\.example\.test/);
 });
 

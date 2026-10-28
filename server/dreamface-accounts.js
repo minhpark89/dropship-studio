@@ -25,29 +25,79 @@ function dreamFaceEmails(store, exceptId = "") {
 }
 
 /**
- * Keep the proxy contract shared by single-account and bulk DreamFace setup.
- * Chrome/Playwright can use a proxy server, but the current owned-profile
- * launcher does not support credentials embedded in the URL.
+ * Parse the formats people commonly receive from proxy providers:
+ * host:port, host:port:user:pass and user:pass@host:port. Credentials are
+ * returned separately so callers can keep them in SecretStore instead of
+ * exposing a proxy password in the public workspace snapshot.
  */
-export function normalizeProxy(value) {
+export function parseProxy(value) {
   const source = String(value || "").trim();
-  if (!source) return "";
+  if (!source) return { server: "", username: "", password: "" };
+  let candidate = source;
+  const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(candidate);
+  const scheme = hasScheme ? candidate.split("://", 1)[0].toLowerCase() : "http";
+  if (!hasScheme && !candidate.includes("@")) {
+    const parts = candidate.split(":");
+    if (parts.length >= 4 && parts[0] && parts[1] && parts[2]) {
+      const [host, port, username, ...rest] = parts;
+      candidate = `${scheme}://${encodeURIComponent(username)}:${encodeURIComponent(rest.join(":"))}@${host}:${port}`;
+    } else {
+      candidate = `${scheme}://${candidate}`;
+    }
+  } else if (!hasScheme) {
+    candidate = `${scheme}://${candidate}`;
+  }
   let proxy;
   try {
-    proxy = new URL(source.includes("://") ? source : `http://${source}`);
+    proxy = new URL(candidate);
   } catch {
     throw new StudioError("Địa chỉ proxy không hợp lệ.", "INVALID_PROXY");
   }
   if (!["http:", "https:", "socks5:"].includes(proxy.protocol) ||
-      proxy.username || proxy.password ||
-      !["", "/"].includes(proxy.pathname) || proxy.search || proxy.hash ||
-      !proxy.hostname) {
+      !proxy.hostname || !proxy.port ||
+      !["", "/"].includes(proxy.pathname) || proxy.search || proxy.hash) {
     throw new StudioError(
-      "Proxy hỗ trợ HTTP/HTTPS/SOCKS5 dạng host:port và không chứa mật khẩu.",
+      "Proxy dùng HTTP/HTTPS/SOCKS5 và cần đúng dạng host:port, host:port:user:pass hoặc user:pass@host:port.",
       "INVALID_PROXY",
     );
   }
-  return `${proxy.protocol}//${proxy.host}`;
+  let username = "";
+  let password = "";
+  try {
+    username = decodeURIComponent(proxy.username || "");
+    password = decodeURIComponent(proxy.password || "");
+  } catch {
+    throw new StudioError("Thông tin user/pass của proxy không hợp lệ.", "INVALID_PROXY");
+  }
+  if ((username && !password) || (!username && password))
+    throw new StudioError("Proxy phải có đủ user và password.", "INVALID_PROXY");
+  return { server: `${proxy.protocol}//${proxy.host}`, username, password };
+}
+
+export function normalizeProxy(value) {
+  return parseProxy(value).server;
+}
+
+export function proxySecretId(accountId) {
+  return `proxy-${accountId}`;
+}
+
+export function saveDreamFaceProxy(store, account, value) {
+  const parsed = parseProxy(value);
+  const secrets = new SecretStore(store.root);
+  if (parsed.username || parsed.password) secrets.set(proxySecretId(account.id), parsed);
+  else secrets.delete(proxySecretId(account.id));
+  return parsed;
+}
+
+export function getDreamFaceProxy(store, account) {
+  const parsed = parseProxy(account?.proxy || "");
+  const saved = new SecretStore(store.root).get(proxySecretId(account.id));
+  return {
+    server: parsed.server,
+    username: saved?.username || parsed.username || "",
+    password: saved?.password || parsed.password || "",
+  };
 }
 
 function proxyForSlot({ proxy = "", proxies = [] }, index, count) {
@@ -63,7 +113,7 @@ function proxyForSlot({ proxy = "", proxies = [] }, index, count) {
   const selected = entries.length
     ? entries.length === 1 ? entries[0] : entries[index]
     : proxy;
-  return normalizeProxy(selected);
+  return parseProxy(selected);
 }
 
 export function createDreamFaceSlots(store,{count,namePrefix,proxy="",proxies=[]}) {
@@ -73,12 +123,14 @@ export function createDreamFaceSlots(store,{count,namePrefix,proxy="",proxies=[]
   return Array.from({length:count},(_,index)=>{
     const credentials=createDreamFaceCredentials("", usedEmails);
     usedEmails.add(credentials.email);
+    const parsedProxy = proxyForSlot({proxy,proxies},index,count);
     const account=store.add("accounts",{
-      name:`${namePrefix} ${String(offset+index+1).padStart(2,"0")}`,provider:"dreamface",loginMethod:"credentials",email:credentials.email,proxy:proxyForSlot({proxy,proxies},index,count),
+      name:`${namePrefix} ${String(offset+index+1).padStart(2,"0")}`,provider:"dreamface",loginMethod:"credentials",email:credentials.email,proxy:parsedProxy.server,proxyAuth:Boolean(parsedProxy.username),
       status:"needs_login",hasCredentials:true,gmailStatus:"idle",message:"Email mẫu và mật khẩu đã lưu an toàn. Bấm Tạo Gmail & điền để mở DreamFace.",
       rotationIndex:offset+index+1,rotationEnabled:true,rotationMode:"daily",rotationDay:"",
     });
     secrets.set(`dreamface-${account.id}`,credentials);
+    if (parsedProxy.username || parsedProxy.password) secrets.set(proxySecretId(account.id), parsedProxy);
     return account;
   });
 }

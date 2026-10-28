@@ -369,6 +369,7 @@ export class ProductionService {
       variation: item.index + 1,
       visualVariant: item.index + 1,
       variationPolicy: request.variationPolicy,
+      autoCreateContent: request.autoCreateContent === true,
       presenterMode: request.contentType === "news" && request.accountId !== "auto" ? "same-account" : "auto-rotate",
       contentType: request.contentType,
       researchId: item.researchId,

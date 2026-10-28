@@ -385,7 +385,7 @@ function syncPages(meta, tokenEntry, pages) {
 
 const tokenStrategies = new Set(["round_robin", "least_recently_used", "random"]);
 
-function normalizeTokenStrategy(value, fallback = "least_recently_used") {
+function normalizeTokenStrategy(value, fallback = "round_robin") {
   const candidate = String(value || "").trim();
   return tokenStrategies.has(candidate) ? candidate : fallback;
 }
@@ -1032,6 +1032,15 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     res.json(postPreflight(store, post, metaState(store)));
   });
 
+  const publishTokenNextAt = new Map();
+  const reservePublishSlot = async (page) => {
+    const key = String(page?.tokenId || `page:${page?.id || "unknown"}`);
+    const current = Date.now();
+    const next = Math.max(current, Number(publishTokenNextAt.get(key) || 0));
+    publishTokenNextAt.set(key, next + 2_000);
+    if (next > current) await wait(next - current);
+  };
+
   const publishReel = async ({ postId, idempotencyKey }) => {
     const parsedPostId = z.string().uuid().parse(postId);
     const parsedKey = z.string().trim().min(8).max(160).parse(idempotencyKey || `${parsedPostId}:${store.require("socialPosts", parsedPostId).revision}`);
@@ -1046,6 +1055,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
       const tokenGroup = post.tokenGroupId ? meta.tokenGroups.find((group) => group.id === post.tokenGroupId) : null;
       const page = requirePostPage(store, meta, post, tokenGroup?.tokenIds || [], tokenGroup);
       try {
+        await reservePublishSlot(page);
         await client.comment({ token: page.accessToken, objectId: existing.externalPostId, message: post.firstComment });
       } catch (error) {
         const retryRecord = {
@@ -1086,6 +1096,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     const page = requirePostPage(store, meta, post, tokenGroup?.tokenIds || [], tokenGroup);
     const media = store.state.media.find((item) => item.id === post.mediaIds[0]);
     const bytes = await fs.readFile(media.file);
+    await reservePublishSlot(page);
     const start = await client.startReel({ token: page.accessToken, pageId: page.id, fileSize: bytes.byteLength });
     const videoId = start.video_id || start.id;
     if (!videoId) throw new StudioError("Meta không trả về video ID sau bước start.", "META_UPLOAD_FAILED", 502);

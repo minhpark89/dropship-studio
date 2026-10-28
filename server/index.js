@@ -22,7 +22,7 @@ import { mountSocialRoutes } from "./social.js";
 import { mountResearchRoutes } from "./research.js";
 import { mountMetaRoutes } from "./meta.js";
 import { createDreamFaceProvider } from "./providers/dreamface.js";
-import { createDreamFaceSlots, ensureDreamFaceCredentials, normalizeProxy, saveDreamFaceCredentials } from "./dreamface-accounts.js";
+import { createDreamFaceSlots, ensureDreamFaceCredentials, parseProxy, proxySecretId, saveDreamFaceProxy, saveDreamFaceCredentials } from "./dreamface-accounts.js";
 import { SecretStore } from "./secret-store.js";
 import { mountProductionRoutes } from "./production.js";
 import { mountContentRoutes } from "./content.js";
@@ -160,24 +160,22 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     });
     if (post.contentType !== "news") return { postId: post.id, status: "generated" };
     if (post.automationError) return { postId: post.id, status: "error", error: post.automationError };
-    if (store.state.settings.content?.autoPublishNews === false) return { postId: post.id, status: "generated" };
+    let websiteConfigured = false;
+    try {
+      websiteService.selected();
+      websiteConfigured = true;
+    } catch {
+      // A website is optional for Meta queueing. The generated article and
+      // first comment can go straight to a Page group when no site is set.
+    }
+    if (store.state.settings.content?.autoPublishNews === false || !websiteConfigured) return { postId: post.id, status: "generated" };
     try {
       const published = await websiteService.publish(post.id, { revision: post.revision });
-      if (store.state.settings.content?.autoPostNews !== true) {
-        store.patch("socialPosts", published.id, { automationStatus: "published", automationError: null });
-        return { postId: published.id, status: "published" };
-      }
-      try {
-        const publication = await metaService.autoPublishNews(published.id);
-        if (publication.firstCommentError) {
-          store.patch("socialPosts", published.id, { automationStatus: "meta_error", automationError: publication.firstCommentError });
-          return { postId: published.id, status: "meta_error", error: publication.firstCommentError };
-        }
-        return { postId: published.id, status: "social_published", publication };
-      } catch (error) {
-        store.patch("socialPosts", published.id, { automationStatus: "meta_error", automationError: error.message });
-        return { postId: published.id, status: "meta_error", error: error.message };
-      }
+      // Meta publishing is owned by the Page-group scheduler. This keeps a
+      // completed render in the local queue until its configured time instead
+      // of sending it immediately to the currently bound Page.
+      store.patch("socialPosts", published.id, { automationStatus: "published", automationError: null });
+      return { postId: published.id, status: "generated" };
     } catch (error) {
       store.patch("socialPosts", post.id, { automationStatus: "website_error", automationError: error.message });
       return { postId: post.id, status: "website_error", error: error.message };
@@ -359,14 +357,18 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     const data = accountSchema.parse(req.body);
     if (data.provider === "flow" && data.loginMethod === "apple")
       throw new StudioError("Google Flow dùng tài khoản Google hoặc cookie.");
-    res.status(201).json(
-      store.add("accounts", {
+    const parsedProxy = parseProxy(data.proxy);
+    if ((parsedProxy.username || parsedProxy.password) && data.provider !== "dreamface")
+      throw new StudioError("Proxy có user/password hiện chỉ dùng được với profile DreamFace.", "PROXY_AUTH_UNSUPPORTED", 422);
+    const account = store.add("accounts", {
         ...data,
-        proxy: normalizeProxy(data.proxy),
+        proxy: parsedProxy.server,
+        proxyAuth: Boolean(parsedProxy.username),
         status: "offline",
         message: "Chưa kiểm tra phiên đăng nhập.",
-      }),
-    );
+      });
+    if (data.provider === "dreamface") saveDreamFaceProxy(store, account, data.proxy);
+    res.status(201).json(account);
   });
   app.post("/api/accounts/bulk-slots", (req, res) => {
     const input = z.object({
@@ -386,14 +388,29 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       throw new StudioError("Hồ sơ đang được sử dụng. Chờ tác vụ hiện tại kết thúc trước khi đổi proxy.", "PROFILE_BUSY", 409);
     if (account.provider !== "dreamface" && browsers.profileAccounts(account).length > 1)
       throw new StudioError("Hồ sơ Google đang dùng chung. Đổi proxy riêng sẽ làm lệch các tài khoản liên kết.", "SHARED_PROFILE", 409);
-    const proxy = normalizeProxy(input.proxy);
-    if (proxy === (account.proxy || "")) return res.json(account);
+    const parsedProxy = parseProxy(input.proxy);
+    if ((parsedProxy.username || parsedProxy.password) && account.provider !== "dreamface")
+      throw new StudioError("Proxy có user/password hiện chỉ dùng được với profile DreamFace.", "PROXY_AUTH_UNSUPPORTED", 422);
+    if (parsedProxy.server === (account.proxy || "") && Boolean(parsedProxy.username) === Boolean(account.proxyAuth)) return res.json(account);
     if (account.provider === "dreamface") await dreamface.close(account);
     else await browsers.close(account.id);
+    if (account.provider === "dreamface") saveDreamFaceProxy(store, account, input.proxy);
     res.json(store.patch("accounts", account.id, {
-      proxy,
+      proxy: parsedProxy.server,
+      proxyAuth: Boolean(parsedProxy.username),
       status: account.status === "ready" ? "offline" : account.status,
-      message: proxy ? "Proxy đã lưu. Hãy kiểm tra phiên trước khi render." : "Đã bỏ proxy. Hãy kiểm tra phiên trước khi render.",
+      message: parsedProxy.server ? "Proxy đã lưu. Hãy kiểm tra proxy trước khi render." : "Đã bỏ proxy. Hãy kiểm tra phiên trước khi render.",
+    }));
+  });
+  app.post("/api/accounts/:id/proxy-check", async (req, res) => {
+    const account = store.require("accounts", req.params.id);
+    if (account.provider !== "dreamface") throw new StudioError("Kiểm tra proxy có user/password hiện chỉ dành cho profile DreamFace.", "PROXY_CHECK_UNSUPPORTED", 422);
+    const result = await dreamface.checkProxy(account);
+    res.json(store.patch("accounts", account.id, {
+      proxyStatus: result.status,
+      proxyIp: result.ip || "",
+      proxyCheckedAt: new Date().toISOString(),
+      proxyMessage: result.message,
     }));
   });
   app.post("/api/accounts/:id/gmail-signup", async (req, res) => {
@@ -486,7 +503,11 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     const account = store.require("accounts", req.params.id);
     if (account.provider === "dreamface") await dreamface.close(account);
     const result=await browsers.deleteAccount(req.params.id);
-    if(account.provider==="dreamface")new SecretStore(store.root).delete(`dreamface-${account.id}`);
+    if(account.provider==="dreamface") {
+      const secrets = new SecretStore(store.root);
+      secrets.delete(`dreamface-${account.id}`);
+      secrets.delete(proxySecretId(account.id));
+    }
     res.json(result);
   });
 
@@ -496,7 +517,8 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     queue.tick();
   });
   app.post("/api/jobs/render", (req, res) => {
-    const job = queue.enqueueRender(req.body);
+    const { production, ...input } = req.body || {};
+    const job = queue.enqueueRender(input, { production });
     res.status(201).json(job);
     queue.tick();
   });
@@ -528,6 +550,8 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     const input = z
       .object({
         concurrency: z.number().int().min(1).max(5).optional(),
+        renderConcurrency: z.number().int().min(1).max(4).optional(),
+        renderThreads: z.number().int().min(1).max(32).optional(),
         queuePaused: z.boolean().optional(),
         pollSeconds: z.number().int().min(3).max(60).optional(),
         maxWaitMinutes: z.number().int().min(2).max(120).optional(),

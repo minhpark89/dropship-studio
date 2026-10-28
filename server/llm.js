@@ -17,6 +17,15 @@ export function normalizeLlmEndpoint(value) {
   }
 }
 
+function safeLlmFailure(error) {
+  const message = String(error?.message || "invalid JSON response")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/(?:sk|key|token)[-_][A-Za-z0-9._~-]{8,}/gi, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return message.slice(0, 240) || "invalid JSON response";
+}
+
 export async function requestJsonContent(store, system, input, { fetchImpl = globalThis.fetch, signal } = {}) {
   const settings = llmSettingsSchema.parse(store.state.settings.llm || {});
   if (!settings.enabled) throw new StudioError("Enable and test the LLM in Settings first.", "LLM_DISABLED", 409);
@@ -41,6 +50,6 @@ export async function requestJsonContent(store, system, input, { fetchImpl = glo
   } catch (error) {
     if (error instanceof StudioError) throw error;
     if (signal?.aborted) throw signal.reason;
-    throw new StudioError("LLM did not return valid content. Test the saved model in Settings, then retry.", "LLM_INVALID_RESPONSE", 502);
+    throw new StudioError(`LLM did not return valid content: ${safeLlmFailure(error)}. Test the saved model in Settings, then retry.`, "LLM_INVALID_RESPONSE", 502);
   }
 }

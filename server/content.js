@@ -144,7 +144,10 @@ export async function generateContent(store, raw, options = {}) {
   const articleImages = researchArticleImages(store, research);
   const coverImageUrl = articleImages[0]?.url || "";
   const articleBody = articleWithImages(parsed.articleBody, articleImages);
-  return {contentType:"news",...parsed,coverImageUrl,articleBody:`${articleBody}\n\n## Sources\n${sources.map(source=>`- [${source.source || source.title}](${source.url})`).join("\n")}`,researchId,firstComment:articleUrl?`${label}: ${articleUrl}`:"",linkUrl:articleUrl,linkLabel:label,sourceUrl:sources[0].url};
+  const firstComment = articleUrl
+    ? `${label}: ${articleUrl}`
+    : (defaults.newsFirstCommentTemplate || "Read the full article in the caption.").replaceAll("{{link}}", "").trim();
+  return {contentType:"news",...parsed,coverImageUrl,articleBody:`${articleBody}\n\n## Sources\n${sources.map(source=>`- [${source.source || source.title}](${source.url})`).join("\n")}`,researchId,firstComment,linkUrl:articleUrl,linkLabel:label,sourceUrl:sources[0].url};
 }
 
 function fallbackNewsContent(store, media) {
@@ -169,7 +172,7 @@ function fallbackNewsContent(store, media) {
     caption: summary.slice(0, 5000),
     articleBody,
     researchId,
-    firstComment: linkUrl ? template.replaceAll("{{link}}", linkUrl) : "",
+    firstComment: (linkUrl ? template.replaceAll("{{link}}", linkUrl) : (defaults.newsFirstCommentTemplate || "Read the full article in the caption.").replaceAll("{{link}}", "")).trim(),
     linkUrl,
     linkLabel: label,
     coverImageUrl,
@@ -224,6 +227,14 @@ export async function createContentFromMedia(store, mediaId, { pageId = "", sour
     fields = contentType === "news"
       ? fallbackNewsContent(store, media)
       : fallbackProductContent(store, media);
+  }
+  if (existing && generationError) {
+    return store.patch("socialPosts", existing.id, {
+      ...(source ? { automationSource: source } : {}),
+      automationStatus: "error",
+      automationError: generationError.message || "LLM did not return valid content.",
+      revision: existing.revision + 1,
+    });
   }
   const payload = socialPostSchema.parse({
     ...fields,

@@ -4,6 +4,7 @@ export const productionRequestSchema = z.object({
   requestId: z.string().uuid(),
   projectId: z.string().uuid(),
   contentType: z.enum(["news", "product"]),
+  autoCreateContent: z.boolean().default(false),
   autoResearch: z.boolean().default(true),
   researchId: z.string().uuid().nullable().default(null),
   topic: z.string().trim().max(200).default(""),

@@ -13,6 +13,14 @@ import {
 } from "lucide-react";
 import { api, bytes, timecode, clipFrom } from "../api.js";
 import { Button, Empty, MediaThumb, Modal, Uploader } from "../components.jsx";
+import { mediaOutputType as classifyMediaOutput } from "../../shared/output-media.js";
+
+function mediaOutputType(media) {
+  const explicit = String(media?.production?.contentType || media?.mediaType || "").toLowerCase();
+  if (explicit === "news" || explicit === "news-video" || /^news(?:\s|[·-])/i.test(String(media?.name || ""))) return "news";
+  if (explicit === "product" || explicit === "product-video") return "product";
+  return "other";
+}
 
 export function LibraryPage({ data, project, run, notify, navigate }) {
   const [filter, setFilter] = useState("all");
@@ -24,7 +32,11 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
       (item) =>
         (item.projectId === project.id || !item.projectId) &&
         (filter === "all" ||
-          (filter === "exports" ? item.generated : item.kind === filter)) &&
+          (filter === "exports"
+            ? item.generated
+            : ["news", "product"].includes(filter)
+              ? item.kind === "video" && classifyMediaOutput(item, data.jobs) === filter
+              : item.kind === filter)) &&
         item.name.toLowerCase().includes(search.toLowerCase()),
     )
     .slice()
@@ -59,6 +71,20 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
     );
     navigate("content");
   };
+  const deleteSelected = async () => {
+    const items = selected
+      .map((id) => data.media.find((item) => item.id === id))
+      .filter(Boolean);
+    if (!items.length || !confirm(`Xóa ${items.length} tệp đã chọn khỏi thư viện?`)) return;
+    const results = await Promise.all(
+      items.map((item) => run(() => api(`/media/${item.id}`, {}, "DELETE"))),
+    );
+    const deleted = results.filter(Boolean).length;
+    if (deleted) {
+      setSelected([]);
+      notify(`Đã xóa ${deleted} tệp khỏi thư viện.`);
+    }
+  };
   return (
     <div className="page">
       <div className="page-heading">
@@ -74,6 +100,8 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
           {[
             ["all", "Tất cả"],
             ["video", "Video"],
+            ["news", "Output News"],
+            ["product", "Output Product"],
             ["image", "Ảnh"],
             ["audio", "Âm thanh"],
             ["exports", "Đã tạo / xuất"],
@@ -115,6 +143,10 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
           >
             <Scissors size={15} />
             Thêm vào timeline
+          </Button>
+          <Button className="danger-text" onClick={deleteSelected}>
+            <Trash2 size={15} />
+            Xóa đã chọn
           </Button>
         </div>
       )}
@@ -166,6 +198,11 @@ export function LibraryPage({ data, project, run, notify, navigate }) {
                     "render"
                       ? "BẢN XUẤT"
                       : "AI"}
+                  </span>
+                )}
+                {item.kind === "video" && classifyMediaOutput(item, data.jobs) !== "other" && (
+                  <span className={`media-output-tag ${classifyMediaOutput(item, data.jobs)}`}>
+                    {classifyMediaOutput(item, data.jobs) === "news" ? "OUTPUT NEWS" : "OUTPUT PRODUCT"}
                   </span>
                 )}
               </div>

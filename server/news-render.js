@@ -194,7 +194,8 @@ export async function renderNewsBroadcast(store, job, presenter, plan, images, s
     }
     const ctaStart = Math.max(0, duration - 4.2);
     filters.push(`[${captionVideo}]drawbox=x=700:y=42:w=332:h=74:color=${preset.cta}:t=fill:enable='gte(t,${ctaStart.toFixed(3)})',drawtext=fontfile=news-label.ttf:textfile=cta.txt:fontcolor=${preset.dark}:fontsize=22:line_spacing=0:x=725:y=58:enable='gte(t,${ctaStart.toFixed(3)})'[outv]`);
-    args.push("-filter_complex_threads", "4", "-filter_complex", filters.join(";"), "-map", "[outv]", "-map", "[voice]", "-t", duration.toFixed(3), "-r", String(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "output.mp4");
+    const renderThreads = String(Math.max(1, Math.min(32, Number(store.state.settings.renderThreads) || 4)));
+    args.push("-filter_complex_threads", renderThreads, "-filter_complex", filters.join(";"), "-map", "[outv]", "-map", "[voice]", "-t", duration.toFixed(3), "-r", String(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", renderThreads, "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "output.mp4");
     update(8, "Building smooth news transitions");
     await runProcess(ffmpeg, args, {
       signal,

@@ -6,6 +6,7 @@ import { providers } from "../../shared/contracts.js";
 import { importMedia, probe, binary, runProcess } from "../media.js";
 import { StudioError } from "../store.js";
 import { ensureNewsMcImage } from "../mc-image.js";
+import { getDreamFaceProxy, parseProxy } from "../dreamface-accounts.js";
 
 export const DREAMFACE_PROVIDER = "dreamface";
 export const DREAMFACE_URL = providers.dreamface.url;
@@ -282,6 +283,7 @@ async function importBrowserDownload(store, job, download, signal) {
       generated: true,
       move: true,
       jobId: job.id,
+      mediaType: "news-presenter",
     });
   } finally {
     await fs.rm(temporary, { force: true }).catch(() => {});
@@ -325,6 +327,7 @@ async function downloadResult(store, session, job, url, signal) {
       generated: true,
       move: true,
       jobId: job.id,
+      mediaType: "news-presenter",
     });
   } finally {
     await fs.rm(temporary, { force: true }).catch(() => {});
@@ -396,20 +399,9 @@ export async function prepareDreamFaceReferences(store,page,task) {
 }
 
 function validateProxy(value) {
-  if (!value) return undefined;
-  let proxy;
-  try {
-    proxy = new URL(value.includes("://") ? value : `http://${value}`);
-  } catch {
-    throw providerError("Proxy DreamFace không hợp lệ.", "INVALID_PROXY");
-  }
-  if (!["http:", "https:", "socks5:"].includes(proxy.protocol)) {
-    throw providerError("Proxy DreamFace phải dùng HTTP, HTTPS hoặc SOCKS5.", "INVALID_PROXY");
-  }
-  if (proxy.username || proxy.password) {
-    throw providerError("Proxy DreamFace không nhận thông tin xác thực trong profile.", "INVALID_PROXY");
-  }
-  return `${proxy.protocol}//${proxy.host}`;
+  if (!value) return { server: "", username: "", password: "" };
+  try { return typeof value === "string" ? parseProxy(value) : value; }
+  catch (error) { throw providerError(error.message, error.code || "INVALID_PROXY"); }
 }
 
 function normaliseCookie(item) {
@@ -529,13 +521,17 @@ export class DreamFaceProvider {
       }
       const directory = this.profileDirectory(account);
       await fs.mkdir(directory, { recursive: true });
-      const proxy = validateProxy(account.proxy);
+      const proxy = validateProxy(getDreamFaceProxy(this.store, account));
       const context = await this.browserType.launchPersistentContext(directory, {
         headless: !visible,
         executablePath: executableFrom(this.store, this.executablePath),
         viewport: { width: 1360, height: 940 },
         locale: "en-US",
-        proxy: proxy ? { server: proxy } : undefined,
+        proxy: proxy.server ? {
+          server: proxy.server,
+          username: proxy.username || undefined,
+          password: proxy.password || undefined,
+        } : undefined,
       });
       const page = context.pages()[0] || await context.newPage();
       page.setDefaultTimeout(12000);
@@ -610,6 +606,45 @@ export class DreamFaceProvider {
     const session = existing?.visible&&!existing.page.isClosed()?existing:await this.open(account, { visible: false });
     const result = await this.inspect(account, session, { navigate: !existing?.visible });
     return { ...result, checkedAt: new Date().toISOString() };
+  }
+
+  async checkProxy(account) {
+    const proxy = validateProxy(getDreamFaceProxy(this.store, account));
+    if (!proxy.server) return { status: "missing", message: "Profile này chưa có proxy." };
+    let browser;
+    const startedAt = Date.now();
+    try {
+      browser = await this.browserType.launch({
+        headless: true,
+        executablePath: executableFrom(this.store, this.executablePath),
+        proxy: {
+          server: proxy.server,
+          username: proxy.username || undefined,
+          password: proxy.password || undefined,
+        },
+      });
+      const context = await browser.newContext({ locale: "en-US" });
+      const page = await context.newPage();
+      const response = await page.goto("https://api.ipify.org?format=json", {
+        waitUntil: "domcontentloaded",
+        timeout: 30000,
+      });
+      if (!response?.ok()) throw providerError(`Proxy trả về HTTP ${response?.status() || "?"}.`, "PROXY_CHECK_FAILED");
+      const body = await page.locator("body").innerText({ timeout: 5000 });
+      let ip = "";
+      try { ip = JSON.parse(body).ip || ""; } catch {}
+      if (!ip) throw providerError("Proxy đã kết nối nhưng không đọc được địa chỉ IP.", "PROXY_CHECK_FAILED");
+      return {
+        status: "ready",
+        ip,
+        elapsedMs: Date.now() - startedAt,
+        message: `Proxy hoạt động · IP hiện tại ${ip}.`,
+      };
+    } catch (error) {
+      throw providerError(`Không kết nối được proxy: ${error.message}`, "PROXY_CHECK_FAILED", 502);
+    } finally {
+      await browser?.close().catch(() => {});
+    }
   }
 
   async login(account, input = {}) {

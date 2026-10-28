@@ -6,7 +6,7 @@ import {randomUUID} from "node:crypto";
 import {Store} from "../server/store.js";
 import {SecretStore} from "../server/secret-store.js";
 import {WebsiteService,articleHtml} from "../server/website.js";
-import {createDreamFaceSlots,normalizeProxy,saveDreamFaceCredentials} from "../server/dreamface-accounts.js";
+import {createDreamFaceSlots,normalizeProxy,parseProxy,saveDreamFaceCredentials} from "../server/dreamface-accounts.js";
 
 async function fixture(t,options={}) {
   const root=path.resolve(".verification",`website-${randomUUID()}`),store=new Store(root);
@@ -143,5 +143,8 @@ test("DreamFace bulk profiles keep one proxy per slot and reject ambiguous proxy
   const shared=createDreamFaceSlots(store,{count:2,namePrefix:"Shared",proxies:["http://127.0.0.1:9000"]});
   assert.deepEqual(shared.map(account=>account.proxy),["http://127.0.0.1:9000","http://127.0.0.1:9000"]);
   assert.throws(()=>createDreamFaceSlots(store,{count:3,namePrefix:"Bad",proxies:["127.0.0.1:1","127.0.0.1:2"]}),error=>error.code==="INVALID_PROXY_LIST");
-  assert.throws(()=>normalizeProxy("http://user:password@127.0.0.1:8080"),error=>error.code==="INVALID_PROXY");
+  assert.equal(normalizeProxy("http://user:password@127.0.0.1:8080"), "http://127.0.0.1:8080");
+  assert.deepEqual(parseProxy("127.0.0.1:8080:user:password"), {
+    server: "http://127.0.0.1:8080", username: "user", password: "password",
+  });
 });

@@ -46,6 +46,21 @@
   font-size: 11px;
   line-height: 1.55;
 }
+.production-auto-content,
+.editor-auto-content {
+  padding: 10px 12px;
+  border: 1px solid #3a4d68;
+  border-radius: 9px;
+  background: #15243a;
+}
+.production-auto-content strong,
+.editor-auto-content strong {
+  color: #f2f7ff;
+}
+.production-auto-content small,
+.editor-auto-content small {
+  color: #a9bdd8;
+}
 * {
   box-sizing: border-box;
 }
@@ -1347,6 +1362,22 @@ nav button b {
   border-radius: 4px;
   font-weight: 700;
   letter-spacing: 0.5px;
+}
+.media-output-tag {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: #fff;
+  background: #213d5edd;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+.media-output-tag.product {
+  color: #fff0d9;
+  background: #6a4529dd;
 }
 .media-info {
   padding: 14px;
@@ -3090,6 +3121,28 @@ option {
   border-color: #2c496d;
   background: #12243d;
 }
+.research-page .research-detail-block {
+  border-color: #294463;
+  background: #12243d;
+}
+.research-page .research-detail-block > summary {
+  color: #c6d8ed;
+}
+.research-page .research-detail-block[open] > summary {
+  border-bottom-color: #294463;
+}
+.research-page .research-detail-content {
+  background: #102039;
+}
+.research-page .research-batch-toolbar select {
+  color: #eaf2ff;
+  border-color: #3d5b82;
+  background: #142945;
+}
+.research-page .research-batch-count,
+.research-page .research-batch-toolbar label {
+  color: #a9bdd8;
+}
 .research-page .research-script p,
 .research-page .research-articles a,
 .research-page .research-card-heading h2,
@@ -3107,6 +3160,20 @@ option {
   border-color: #294463;
   background: #102039;
 }
+.research-page .research-articles a.research-article-link:hover,
+.research-page .research-articles a.research-article-link:focus-visible {
+  color: #f5f9ff;
+  border-color: #6f9bc8;
+  background: #1c385b;
+  box-shadow: 0 0 0 2px #6f9bc855;
+}
+.research-page .research-article-copy b,
+.research-page .research-open-source { color: #f2f7ff; }
+.research-page .research-article-copy small,
+.research-page .research-article-copy em { color: #a9bdd8; }
+.research-page .research-result-source.fallback { color: #ffd394; border-color: #8b7041; background: #493b25; }
+.research-page .research-llm-status { color: #ffd394; border-color: #8b7041; background: #342b20; }
+.research-page .research-llm-status small { color: #cdbb91; }
 .research-page .research-tags span {
   color: #bdd0e8;
   background: #1a3453;
@@ -3224,4 +3291,20 @@ option {
     justify-content: space-between;
     gap: 8px;
   }
+}
+
+/* The menu is its own scroll region. The workspace must remain usable on
+   short windows where all navigation groups cannot fit at once. */
+.sidebar {
+  height: 100vh;
+  min-height: 0;
+}
+.sidebar > nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }

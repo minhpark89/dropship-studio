@@ -87,7 +87,7 @@ export async function renderTimeline(store, job, signal, progress) {
     "-ac",
     "2",
     "-threads",
-    "4",
+    String(Math.max(1, Math.min(32, Number(store.state.settings.renderThreads) || 4))),
   ];
   const baseArgs = [
     "-hide_banner",

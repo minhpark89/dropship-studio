@@ -17,12 +17,29 @@ store.add("researchResults", {
   headline: "Research screen smoke test",
   angle: "A saved result must keep the workspace visible.",
   script: "The saved result keeps the Research workspace available.",
-  articles: [],
+  articles: [{
+    id: "00000000-0000-4000-8000-000000000001",
+    title: "A verified source readers can open",
+    summary: "The source provides the evidence used by the saved research record.",
+    source: "QA News",
+    url: "https://example.com/qa-news",
+    publishedAt: "2026-10-28T08:00:00.000Z",
+    imageUrl: null,
+    imageQuery: "",
+    relevance: 1,
+  }],
   imageQueries: [],
   imageSearchResults: [],
   imageMediaIds: [],
   warnings: [],
 });
+store.state.settings.llm = {
+  ...store.state.settings.llm,
+  enabled: true,
+  endpoint: "http://127.0.0.1:9/v1",
+  model: "qa-model",
+};
+store.save();
 store.add("socialPages", { name: "News & Product QA", platform: "facebook", externalId: "987654321", url: "https://www.facebook.com/qa", timezone: "Asia/Bangkok", notes: "", archived: false, revision: 1 });
 const studio = await startServer({ port: 0, dataDir: root });
 const browser = await chromium.launch({ headless: true });
@@ -37,7 +54,56 @@ try {
   await page.getByRole("button", { name: "Research & News", exact: true }).click();
   await page.locator(".research-page").waitFor();
   assert.equal(errors.length, 0, errors.join("\n"));
+  await page.locator("details.research-articles > summary").click();
+  const sourceLink = page.getByRole("link", { name: /Mở nguồn: A verified source readers can open/ });
+  assert.equal(await sourceLink.getAttribute("href"), "https://example.com/qa-news");
+  assert.equal(await sourceLink.locator(".research-open-source").innerText(), "Mở nguồn");
+  assert.equal(await page.locator(".research-batch-toolbar").count(), 1);
+  assert.equal(await page.locator(".research-batch-toolbar select").count(), 3);
+  await page.getByLabel("Lọc Research").selectOption("needs-llm");
+  assert.equal(await page.locator(".research-result-card").count(), 1);
+  await page.getByLabel("Lọc Research").selectOption("all");
+  assert.equal(await page.getByText("Render tất cả 1 tin", { exact: true }).count(), 1);
   report.checks.push("Research & News stays visible with an existing result and has no blank-screen error");
+  let testLlmPayload = null;
+  await page.route("**/api/settings/llm/models", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: ["qa-model"] }) });
+  });
+  await page.route("**/api/settings/llm/test", async (route) => {
+    testLlmPayload = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, model: testLlmPayload.model, latencyMs: 2, preview: "ok" }) });
+  });
+  await page.getByRole("button", { name: "Cài đặt", exact: true }).click();
+  await page.locator(".settings-llm-panel").waitFor();
+  await page.getByLabel("Endpoint OpenAI-compatible").fill("https://new.example/v1/chat/completions");
+  await page.getByRole("textbox", { name: "API key", exact: true }).fill("unsaved-form-key");
+  await page.getByRole("button", { name: "Test LLM", exact: true }).click();
+  await page.locator(".settings-llm-result").waitFor();
+  assert.equal(testLlmPayload.endpoint, "https://new.example/v1/chat/completions");
+  assert.equal(testLlmPayload.apiKey, "unsaved-form-key");
+  assert.equal(testLlmPayload.model, "qa-model");
+  await page.unroute("**/api/settings/llm/models");
+  await page.unroute("**/api/settings/llm/test");
+  report.checks.push("Settings Test LLM sends the current unsaved endpoint and API key");
+  await page.getByRole("button", { name: "Research & News", exact: true }).click();
+  await page.locator(".research-page").waitFor();
+  await page.getByRole("button", { name: "Render 1 News video", exact: true }).last().click();
+  await page.locator(".render-hub").waitFor();
+  await page.getByTestId("render-record").waitFor();
+  assert.match(await page.getByTestId("render-record").innerText(), /Research screen smoke test/);
+  assert.equal(await page.locator(".render-editor-note").count(), 1);
+  report.checks.push("Research render keeps the selected article attached to a visible render record and explains Queue versus manual timeline");
+  await page.setViewportSize({ width: 1440, height: 500 });
+  const sidebarScroll = await page.locator(".sidebar > nav").evaluate((element) => {
+    const before = element.scrollTop;
+    element.scrollTop = element.scrollHeight;
+    return { overflowY: getComputedStyle(element).overflowY, scrollable: element.scrollHeight > element.clientHeight, moved: element.scrollTop > before };
+  });
+  assert.equal(sidebarScroll.overflowY, "auto");
+  assert.equal(sidebarScroll.scrollable, true);
+  assert.equal(sidebarScroll.moved, true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  report.checks.push("Left navigation has an independent mouse-scroll region on short windows");
   await page.getByRole("button", { name: "Channels & Tokens", exact: true }).click();
   await page.locator(".pages-hub").waitFor();
   await page.getByRole("button", { name: "Thêm Page", exact: true }).first().click();

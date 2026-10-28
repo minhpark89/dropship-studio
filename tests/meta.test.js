@@ -34,6 +34,29 @@ test("token pools automatically split verified Pages across healthy tokens", () 
   assert.deepEqual(result.loads, { "tok-1": 2, "tok-2": 2 });
 });
 
+test("round robin keeps uneven Page pools within one Page of each other", () => {
+  const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
+  const tokens = Array.from({ length: 30 }, (_, index) => ({ id: `tok-${index}`, token: `token-${index}-123456`, status: "ACTIVE", totalCalls: 0 }));
+  const pages = Array.from({ length: 100 }, (_, pageIndex) => ({
+    id: `page-${pageIndex}`,
+    tokenBindings: Object.fromEntries(tokens.map((token) => [token.id, {
+      status: "VERIFIED",
+      pageToken: `${token.id}-${pageIndex}`,
+      verifiedPageId: `page-${pageIndex}`,
+      credentialFingerprint: fingerprint(token.token),
+    }])),
+  }));
+  const meta = { tokens, pages };
+  const group = { id: "pool-balance", tokenIds: tokens.map((token) => token.id), pageIds: pages.map((page) => page.id) };
+  const result = autoAssignTokenGroup(meta, group, { strategy: "round_robin" });
+  const loads = Object.values(result.loads);
+  assert.equal(result.assignedCount, 100);
+  assert.equal(result.blockedCount, 0);
+  assert.equal(Math.min(...loads), 3);
+  assert.equal(Math.max(...loads), 4);
+  assert.equal(loads.filter((load) => load === 4).length, 10);
+});
+
 test("Meta client uses the current Graph version and keeps token out of response data", async () => {
   const requests = [];
   const client = createMetaClient({

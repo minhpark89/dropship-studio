@@ -27,6 +27,21 @@ import { api } from "../api.js";
 import { Button, Field, Badge, Empty, Notice } from "../components.jsx";
 import { WebsiteSettings } from "./WebsiteSettings.jsx";
 
+function jobElapsedSeconds(job) {
+  if (Number.isFinite(Number(job.durationMs))) return Math.max(0, Number(job.durationMs) / 1000);
+  const started = Date.parse(job.startedAt || job.createdAt || "");
+  const finished = Date.parse(job.finishedAt || "") || Date.now();
+  return Number.isFinite(started) ? Math.max(0, (finished - started) / 1000) : 0;
+}
+
+function formatJobDuration(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) return `${total} giây`;
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
+  return `${minutes} phút${remainder ? ` ${remainder} giây` : ""}`;
+}
+
 export function QueuePage({ data, project, run, navigate }) {
   const [filter, setFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -195,7 +210,8 @@ export function QueuePage({ data, project, run, navigate }) {
                       {account ? ` · ${account.name}` : job.payload.accountId === "auto" && jobContentType !== "other" ? " · Auto profile pool" : ""}
                     </p>
                     {jobContentType === "news" && job.production?.researchId && <small>Research → MC → editorial images → website article</small>}
-                    {job.type === "news" && job.contentAutomation && <small>Content: {({ generated: "Đã tạo bài", published: "Đã đăng website", social_published: "Đã đăng website + Meta", meta_error: "Lỗi Meta", website_error: "Lỗi website", error: "Lỗi tạo bài" }[job.contentAutomation] || job.contentAutomation)}</small>}
+                    {job.contentAutomation && <small>Content: {({ generated: "Đã tạo", warehouse_ready: "Đã tạo, chờ duyệt", warehouse_error: "Lỗi tạo", published: "Đã đăng website", social_published: "Đã đăng website + Meta", meta_error: "Lỗi Meta", website_error: "Lỗi website", error: "Lỗi tạo bài" }[job.contentAutomation] || job.contentAutomation)}</small>}
+                    {(job.type === "news" || job.type === "render") && (job.finishedAt || running) && <small>{running ? "Đã chạy" : "Thời gian video"}: {formatJobDuration(jobElapsedSeconds(job))}</small>}
                     {waiting && job.type === "generate" && !available && (
                       <button
                         className="text-button warning-text"
@@ -337,7 +353,7 @@ export function QueuePage({ data, project, run, navigate }) {
                       ·{" "}
                       {job.type === "generate"
                         ? `${job.elapsedSeconds || 0} giây theo dõi`
-                        : `${Math.round(job.progress)}%`}
+                        : `${Math.round(job.progress)}%${job.type === "news" || job.type === "render" ? ` · ${formatJobDuration(jobElapsedSeconds(job))}` : ""}`}
                     </small>
                   </div>
                 )}
@@ -485,8 +501,27 @@ export function SettingsPage({ data, project, run, notify }) {
   }, [settings.llm?.endpoint, settings.llm?.enabled]);
   const testLlm = async () => {
     setLlmTestBusy(true);
-    const result = await run(() => api("/settings/llm/test"));
-    if (result) setLlmTest(result);
+    const llm = settings.llm || {};
+    const result = await run(() => api("/settings/llm/test", {
+      endpoint: llm.endpoint || "",
+      model: llm.model || "",
+      timeoutSeconds: Number(llm.timeoutSeconds) || 90,
+      // An empty field means keep the locally saved key. A newly entered key
+      // is sent for this test even before the user saves the form.
+      apiKey: llm.apiKey === "[đã lưu]" ? "[đã lưu]" : llm.apiKey || "",
+    }));
+    if (result) {
+      setLlmTest(result);
+      setSettings((current) => ({
+        ...current,
+        llm: {
+          ...(current.llm || {}),
+          enabled: true,
+          apiKey: current.llm?.apiKey ? "[đã lưu]" : "",
+        },
+      }));
+      notify("Test LLM thành công và cấu hình đã được lưu cho Research/Content.");
+    }
     setLlmTestBusy(false);
   };
   const refreshMcImage = async () => {
@@ -680,6 +715,34 @@ export function SettingsPage({ data, project, run, notify }) {
                   }
                 />
               </Field>
+              <Field label="Video render song song" hint="Số job FFmpeg có thể xuất cùng lúc.">
+                <input
+                  type="number"
+                  min="1"
+                  max="4"
+                  value={settings.renderConcurrency || 1}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      renderConcurrency: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="FFmpeg threads / video" hint="Số luồng cho mỗi video đang render.">
+                <input
+                  type="number"
+                  min="1"
+                  max="32"
+                  value={settings.renderThreads || 4}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      renderThreads: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
             </div>
             <Field label="Chờ tạo AI tối đa (phút)">
               <input
@@ -696,8 +759,8 @@ export function SettingsPage({ data, project, run, notify }) {
               />
             </Field>
             <p className="muted small">
-              Mỗi tài khoản chỉ chạy một tác vụ. FFmpeg xuất tuần tự để giữ tài
-              nguyên ổn định.
+              Mỗi tài khoản AI chỉ chạy một tác vụ. FFmpeg dùng số luồng đã chọn
+              cho mỗi video và có thể xuất nhiều video song song.
             </p>
             <label className="toggle-field">
               <input
@@ -755,7 +818,7 @@ export function SettingsPage({ data, project, run, notify }) {
                 "Đã lưu cài đặt LLM.",
               );
               if (result) {
-                setSettings((current) => ({ ...current, llm: { ...result, apiKey: "" } }));
+                setSettings((current) => ({ ...current, llm: result }));
               }
             }}
           >
@@ -895,7 +958,6 @@ export function SettingsPage({ data, project, run, notify }) {
           <p className="muted small">Đặt link mặc định một lần. Khi tạo Content News/Product, app tự điền link, nhãn link và First Comment để bạn chỉ cần chọn video rồi duyệt.</p>
           <form onSubmit={saveContentSettings}>
             <label className="toggle-field content-auto-publish-toggle"><input type="checkbox" checked={settings.content?.autoPublishNews !== false} onChange={(event) => updateContentSetting("autoPublishNews", event.target.checked)} /><span><strong>Auto publish News article after render</strong><small>When a connected website is configured, the article is published automatically and its exact public URL is written into the matching first comment.</small></span></label>
-            <label className="toggle-field content-auto-publish-toggle"><input type="checkbox" checked={settings.content?.autoPostNews === true} onChange={(event) => updateContentSetting("autoPostNews", event.target.checked)} /><span><strong>Auto post News to Meta after website</strong><small>After the article URL and first comment are ready, publish the matching Reel to the bound Meta Page. Requires a local Page mapped to that Meta Page.</small></span></label>
             <div className="form-grid">
               <Field label="Tên Store"><input value={settings.content?.storeName || ""} maxLength={160} placeholder="Ví dụ: Viral Shop" onChange={(event) => updateContentSetting("storeName", event.target.value)} /></Field>
               <Field label="URL Store"><input type="url" value={settings.content?.storeUrl || ""} placeholder="https://store.example.com" onChange={(event) => updateContentSetting("storeUrl", event.target.value)} /></Field>

@@ -52,6 +52,8 @@ export const researchResultSchema = z.object({
   niche: z.string(),
   language: z.enum(["vi", "en"]),
   createdAt: z.string().datetime(),
+  contentSource: z.enum(["llm", "feed"]).default("feed"),
+  llmError: z.string().max(1000).default(""),
   headline: z.string(),
   angle: z.string(),
   script: z.string(),

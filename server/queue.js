@@ -9,6 +9,14 @@ import { renderTimeline, validateTimeline } from "./render.js";
 import { generate } from "./providers/generate.js";
 import { renderNewsBroadcast } from "./news-render.js";
 
+function elapsedMs(job, finishedAt) {
+  const started = Date.parse(job.startedAt || job.createdAt || "");
+  const finished = Date.parse(finishedAt || "");
+  return Number.isFinite(started) && Number.isFinite(finished)
+    ? Math.max(0, finished - started)
+    : null;
+}
+
 export class JobQueue {
   constructor(store, browsers, options = {}) {
     this.store = store;
@@ -176,6 +184,8 @@ export class JobQueue {
     // Recover the gap between saving the last generated asset and scheduling
     // its export. Persisted assemblyBatchId prevents duplicate render jobs.
     const batches = new Set();
+    let activeRenders = [...this.running.values()].filter((entry) => entry.type === "render").length;
+    const renderConcurrency = Math.max(1, Math.min(4, Number(this.store.state.settings.renderConcurrency) || 1));
     for (const job of this.store.state.jobs) {
       if (job.type !== "generate" || !job.payload.autoAssemble || !job.batchId) continue;
       if (batches.has(job.batchId)) continue;
@@ -190,9 +200,9 @@ export class JobQueue {
       )
         continue;
       if (job.type === "render") {
-        if ([...this.running.values()].some((entry) => entry.type === "render"))
-          continue;
+        if (activeRenders >= renderConcurrency) continue;
         this.start(job, null);
+        activeRenders += 1;
         continue;
       }
       const generating = [...this.running.values()].filter((entry) => entry.type === "provider");
@@ -283,8 +293,13 @@ export class JobQueue {
                 controller.signal,
                 update,
               );
-      if (job.production) this.store.patch("media", media.id, { production: job.production });
-      if (job.type === "news" && this.newsAutomation) {
+      if (job.production) {
+        this.store.patch("media", media.id, {
+          production: job.production,
+          mediaType: job.production.contentType === "news" ? "news-video" : "product-video",
+        });
+      }
+      if (job.production?.autoCreateContent === true && job.type === "news" && this.newsAutomation) {
         try {
           const automation = await this.newsAutomation({ job, media });
           update({ contentPostId: automation?.postId || null, contentAutomation: automation?.status || "generated", contentError: automation?.error || null });
@@ -294,7 +309,7 @@ export class JobQueue {
           this.store.log(job, `Content automation failed: ${error.message}`);
         }
       }
-      if (job.type !== "news" && media.kind === "video" && media.generated && this.videoAutomation) {
+      if (job.production?.autoCreateContent === true && job.type !== "news" && media.kind === "video" && media.generated && this.videoAutomation) {
         try {
           const automation = await this.videoAutomation({ job, media });
           update({ contentPostId: automation?.postId || null, contentAutomation: automation?.status || "warehouse", contentError: automation?.error || null });
@@ -304,22 +319,26 @@ export class JobQueue {
           this.store.log(job, `Content automation failed: ${error.message}`);
         }
       }
+      const finishedAt = new Date().toISOString();
       update({
         status: "completed",
         progress: 100,
         stage: "Hoàn tất",
         mediaId: media.id,
-        finishedAt: new Date().toISOString(),
+        finishedAt,
+        durationMs: elapsedMs(job, finishedAt),
       });
     } catch (error) {
       const cancelled = controller.signal.aborted;
+      const finishedAt = new Date().toISOString();
       update({
         status: cancelled ? "cancelled" : "failed",
         error: cancelled
           ? "Đã dừng theo dõi. Yêu cầu đã gửi trên dịch vụ có thể vẫn tiếp tục."
           : error.message,
         errorCode: error.code || "JOB_FAILED",
-        finishedAt: new Date().toISOString(),
+        finishedAt,
+        durationMs: elapsedMs(job, finishedAt),
       });
       this.store.log(job, job.error);
       if (account && ["NEEDS_LOGIN", "VERIFICATION"].includes(error.code)) {

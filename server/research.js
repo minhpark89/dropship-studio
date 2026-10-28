@@ -280,6 +280,11 @@ function publicLlmSettings(settings) {
   return { ...parsed, apiKey: parsed.apiKey ? "[đã lưu]" : "" };
 }
 
+function llmErrorMessage(error) {
+  const message = String(error?.message || "LLM request failed").replace(/\s+/g, " ").trim();
+  return message.slice(0, 500) || "LLM request failed";
+}
+
 function llmModelsUrl(endpoint) {
   const base = new URL(normalizeLlmEndpoint(endpoint));
   if (!["http:", "https:"].includes(base.protocol) || base.username || base.password)
@@ -363,6 +368,8 @@ export function createResearchService({ fetchImpl = globalThis.fetch, now = () =
       const rawArticles = selectedArticles || await fetchFeeds(feeds, fetchImpl, warnings);
       const articles = dedupeArticles(rawArticles, { maxArticles: request.maxArticles, topic: request.topic });
       let content;
+      let contentSource = "feed";
+      let llmError = "";
       const llm = llmSettingsSchema.parse(store.state.settings?.llm || {});
       // Local OpenAI-compatible servers (for example Ollama/LM Studio) may not
       // require an API key. The endpoint setting is the source of truth; a
@@ -370,11 +377,14 @@ export function createResearchService({ fetchImpl = globalThis.fetch, now = () =
       if (llm.enabled) {
         try {
           content = await requestLlm({ settings: llm, request, articles, fetchImpl });
-        } catch {
-          warnings.push("LLM không khả dụng; kết quả đang dùng bản tóm lược từ feed.");
+          contentSource = "llm";
+        } catch (error) {
+          llmError = llmErrorMessage(error);
+          warnings.push(`LLM không khả dụng: ${llmError}. Kết quả đang dùng bản tóm lược từ feed.`);
         }
       } else {
-        warnings.push("LLM chưa được bật; kết quả đang dùng bản tóm lược từ feed.");
+        llmError = "LLM chưa được bật trong Cài đặt.";
+        warnings.push(`${llmError} Kết quả đang dùng bản tóm lược từ feed.`);
       }
       const normalized = normalizeLlmContent(content, request, articles);
       const articleRecords = articles.map((article) => researchArticleSchema.parse({
@@ -395,6 +405,8 @@ export function createResearchService({ fetchImpl = globalThis.fetch, now = () =
         niche: request.niche,
         language: request.language,
         createdAt: now(),
+        contentSource,
+        llmError,
         ...normalized,
         articles: articleRecords,
         imageSearchResults: [],
@@ -402,6 +414,43 @@ export function createResearchService({ fetchImpl = globalThis.fetch, now = () =
         warnings: [...new Set(warnings)],
       });
       return store.add("researchResults", result);
+    },
+    async rewriteLlm(resultId, store) {
+      const result = store.require("researchResults", resultId);
+      const settings = llmSettingsSchema.parse(store.state.settings?.llm || {});
+      if (!settings.enabled) throw new StudioError("Bật và kiểm tra LLM trong Cài đặt trước khi chạy lại.", "LLM_DISABLED", 409);
+      try {
+        const content = await requestLlm({
+          settings,
+          request: {
+            projectId: result.projectId,
+            topic: result.topic,
+            niche: result.niche,
+            language: result.language,
+          },
+          articles: result.articles || [],
+          fetchImpl,
+        });
+        const normalized = normalizeLlmContent(content, {
+          topic: result.topic,
+          language: result.language,
+        }, result.articles || []);
+        return store.patch("researchResults", result.id, {
+          ...normalized,
+          contentSource: "llm",
+          llmError: "",
+          warnings: (result.warnings || []).filter((warning) => !/^LLM\b/i.test(String(warning))),
+        });
+      } catch (error) {
+        const message = llmErrorMessage(error);
+        const warning = `LLM không khả dụng: ${message}. Kết quả đang dùng bản tóm lược từ feed.`;
+        store.patch("researchResults", result.id, {
+          contentSource: "feed",
+          llmError: message,
+          warnings: [...new Set([...(result.warnings || []).filter((item) => !/^LLM\b/i.test(String(item))), warning])],
+        });
+        throw new StudioError(`LLM chưa tạo được nội dung: ${message}`, error?.code || "LLM_FAILED", 502);
+      }
     },
   };
 }
@@ -435,8 +484,32 @@ export function mountResearchRoutes(app, store, options = {}) {
   });
 
   app.post("/api/settings/llm/test", async (req, res) => {
-    const settings = llmSettingsSchema.parse(store.state.settings?.llm || {});
-    res.json(await testLlmConnection({ settings, fetchImpl }));
+    const body = z.object({
+      endpoint: z.string().url().optional(),
+      apiKey: z.string().max(2000).optional(),
+      model: z.string().trim().min(1).max(200).optional(),
+      timeoutSeconds: z.number().int().min(10).max(300).optional(),
+    }).parse(req.body || {});
+    const current = llmSettingsSchema.parse(store.state.settings?.llm || {});
+    const endpoint = body.endpoint ? normalizeLlmEndpoint(body.endpoint) : current.endpoint;
+    const apiKey = body.apiKey === undefined || body.apiKey === "" || body.apiKey === "[đã lưu]"
+      ? current.apiKey
+      : body.apiKey;
+    const settings = llmSettingsSchema.parse({
+      ...current,
+      ...body,
+      endpoint,
+      apiKey,
+    });
+    const result = await testLlmConnection({ settings, fetchImpl });
+    // A successful test is the user's explicit confirmation that this is the
+    // endpoint/model to use for Research and Content generation. Persist the
+    // exact settings tested so a later Regenerate action cannot use an older
+    // endpoint or key by accident.
+    const saved = { ...settings, enabled: true };
+    store.state.settings.llm = saved;
+    store.save();
+    res.json({ ...result, saved: true });
   });
 
   app.get("/api/research", (req, res) => {
@@ -444,6 +517,18 @@ export function mountResearchRoutes(app, store, options = {}) {
     if (projectId) z.string().uuid().parse(projectId);
     const results = store.state.researchResults.filter((result) => !projectId || result.projectId === projectId);
     res.json({ results });
+  });
+
+  app.delete("/api/research/:id", (req, res) => {
+    const result = store.require("researchResults", req.params.id);
+    const active = store.state.jobs.some((job) => {
+      if (job.projectId !== result.projectId || !["queued", "scheduled", "preparing", "submitting", "rendering", "downloading"].includes(job.status)) return false;
+      return job.production?.researchId === result.id || job.payload?.researchId === result.id;
+    });
+    if (active) throw new StudioError("Tin đang có tác vụ render. Hãy chờ hoàn tất trước khi xóa.", "RESEARCH_BUSY", 409);
+    store.state.researchResults = store.state.researchResults.filter((item) => item.id !== result.id);
+    store.save();
+    res.json({ ok: true, id: result.id });
   });
 
   app.post("/api/research/:id/search-images", async (req, res) => {
@@ -454,6 +539,10 @@ export function mountResearchRoutes(app, store, options = {}) {
     const imageSearchResults = searched.images.map((image) => researchImageSchema.parse(image));
     const updated = store.patch("researchResults", result.id, { imageSearchResults, warnings });
     res.status(201).json({ result: updated, images: imageSearchResults, warnings: searched.warnings });
+  });
+
+  app.post("/api/research/:id/llm", async (req, res) => {
+    res.json(await service.rewriteLlm(req.params.id, store));
   });
 
   app.post("/api/research/:id/import-search-images", async (req, res) => {

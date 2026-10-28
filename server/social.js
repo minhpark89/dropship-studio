@@ -223,7 +223,16 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   const capacity = Math.max(0, dailyLimit - existingToday);
   if (!capacity) return { group, scheduled: [] };
   const candidates = (store.state.socialPosts || [])
-    .filter((post) => ["draft", "ready"].includes(post.status) && !post.pageGroupId && post.mediaIds?.length && (post.automationSource === "render-warehouse" || post.automationSource === "warehouse-sync"))
+    .filter((post) => {
+      if (!["draft", "ready"].includes(post.status) || post.pageGroupId || !post.mediaIds?.length) return false;
+      if (!["render-warehouse", "warehouse-sync", "news-render"].includes(post.automationSource)) return false;
+      if (post.automationError) return false;
+      if (!String(post.firstComment || "").trim()) return false;
+      if (post.contentType === "news") {
+        return Boolean(String(post.caption || "").trim() && String(post.articleBody || "").trim());
+      }
+      return true;
+    })
     .slice()
     .sort((left, right) => new Date(left.createdAt || 0) - new Date(right.createdAt || 0))
     .slice(0, capacity);

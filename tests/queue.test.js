@@ -69,6 +69,9 @@ test("DreamFace generation is routed through its authenticated provider runner",
   assert.equal(called, 1);
   assert.equal(job.status, "completed");
   assert.equal(job.mediaId, "dreamface-media");
+  assert.equal(typeof job.durationMs, "number");
+  assert.ok(job.durationMs >= 0);
+  assert.ok(Date.parse(job.finishedAt) >= Date.parse(job.startedAt));
 });
 
 test("submitted News recovery queues the same job without resubmitting provider work", async (t) => {

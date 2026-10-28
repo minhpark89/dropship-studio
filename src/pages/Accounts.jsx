@@ -65,6 +65,11 @@ export function AccountsPage({ data, run, notify }) {
     setBusy("");
     return result;
   };
+  const checkProxy = async (account) => {
+    const result = await run(() => api(`/accounts/${account.id}/proxy-check`, {}));
+    if (result?.proxyMessage || result?.message) notify(result.proxyMessage || result.message, result?.proxyStatus === "error" ? "error" : "success");
+    return result;
+  };
   const checkDreamfaceAll = async () => {
     if (!dreamfaceAccounts.length || busy) return;
     setBusy("dreamface-all");
@@ -261,7 +266,8 @@ export function AccountsPage({ data, run, notify }) {
                       ? "Email + mật khẩu"
                       : "Google"}
                 </span>
-                {account.proxy && <span><Globe2 size={11} /> Proxy {account.proxy}</span>}
+                {account.proxy && <span><Globe2 size={11} /> Proxy {account.proxy}{account.proxyAuth ? " · user/pass" : ""}</span>}
+                {account.proxyStatus && <span className={account.proxyStatus === "ready" ? "account-proxy-ok" : "account-proxy-error"}><Globe2 size={11} /> {account.proxyStatus === "ready" ? `Proxy OK${account.proxyIp ? ` · ${account.proxyIp}` : ""}` : "Proxy lỗi"}</span>}
               </div>
               <p className="account-message">{account.message}</p>
               {account.provider === "dreamface" && account.gmailStatus && account.gmailStatus !== "idle" && (
@@ -296,6 +302,13 @@ export function AccountsPage({ data, run, notify }) {
                 >
                   <Globe2 size={14} />
                   {account.proxy ? "Sửa proxy" : "Thêm proxy"}
+                </Button>}
+                {account.provider === "dreamface" && account.proxy && <Button
+                  disabled={Boolean(busy) || ["busy", "checking"].includes(account.status)}
+                  busy={busy === `${account.id}:proxy-check`}
+                  onClick={() => checkProxy(account)}
+                >
+                  <Globe2 size={14} /> Kiểm tra proxy
                 </Button>}
               </div>
               {data.capabilities?.googleProfileReuse && account.loginMethod === "google" && googleSources(account).length > 0 && (
@@ -535,7 +548,7 @@ export function AccountsPage({ data, run, notify }) {
               <Field label="Số profile muốn tạo"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
               <Field label="Tiền tố tên profile"><input maxLength="80" value={slotPrefix} onChange={(event) => setSlotPrefix(event.target.value)} /></Field>
             </div>
-            <Field label="Proxy cho profile (tùy chọn)" hint="Một dòng dùng chung cho tất cả profile; nhiều dòng phải đúng bằng số profile. Dạng HTTP/HTTPS/SOCKS5 host:port, giống cấu hình Dola.">
+            <Field label="Proxy cho profile (tùy chọn)" hint="Một dòng dùng chung cho tất cả profile; nhiều dòng phải đúng bằng số profile. Hỗ trợ host:port, host:port:user:pass hoặc user:pass@host:port.">
               <textarea rows="3" value={slotProxies} onChange={(event) => setSlotProxies(event.target.value)} placeholder={"http://127.0.0.1:8080\nhttp://127.0.0.1:8081"} />
             </Field>
             <label className="check-field"><input type="checkbox" aria-label="Start registration now" checked={connectNewProfiles} onChange={event=>setConnectNewProfiles(event.target.checked)}/> Mở kết nối DreamFace ngay</label>
@@ -555,8 +568,8 @@ export function AccountsPage({ data, run, notify }) {
             <Field label="Tên profile">
               <input autoFocus maxLength="80" value={gmailPrefix} onChange={(event) => setGmailPrefix(event.target.value)} placeholder="DreamFace Gmail" />
             </Field>
-            <Field label="Proxy riêng (tùy chọn)" hint="Bỏ trống để chạy bằng IP máy. Nhập HTTP/HTTPS/SOCKS5 dạng host:port giống luồng tài khoản Dola; proxy sẽ gắn cố định cho profile này.">
-              <input value={gmailProxy} onChange={(event) => setGmailProxy(event.target.value)} placeholder="http://127.0.0.1:8080" />
+            <Field label="Proxy riêng (tùy chọn)" hint="Hỗ trợ host:port, host:port:user:pass hoặc user:pass@host:port. User/password được mã hóa trong máy và tự dùng khi mở Chrome.">
+              <input value={gmailProxy} onChange={(event) => setGmailProxy(event.target.value)} placeholder="127.0.0.1:8080:user:pass" />
             </Field>
             <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" busy={busy === "gmail-create"}><MailPlus size={15} /> Tạo email & mở DreamFace</Button></div>
           </form>
@@ -572,8 +585,8 @@ export function AccountsPage({ data, run, notify }) {
               close();
             }
           }}>
-            <Field label="Địa chỉ proxy" hint="HTTP/HTTPS/SOCKS5 dạng host:port. Proxy có tài khoản/mật khẩu trong URL chưa được hỗ trợ bởi profile Chrome hiện tại.">
-              <input autoFocus value={proxyValue} onChange={(event) => setProxyValue(event.target.value)} placeholder="http://127.0.0.1:8080" />
+            <Field label="Địa chỉ proxy" hint="Hỗ trợ host:port, host:port:user:pass hoặc user:pass@host:port. User/password được mã hóa, không hiện lại trong giao diện.">
+              <input autoFocus value={proxyValue} onChange={(event) => setProxyValue(event.target.value)} placeholder="127.0.0.1:8080:user:pass" />
             </Field>
             <Notice>Đổi proxy sẽ đóng phiên trình duyệt hiện tại của profile và chuyển trạng thái về cần kiểm tra; dữ liệu đăng nhập vẫn được giữ.</Notice>
             <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" busy={Boolean(busy)}><Globe2 size={15} /> Lưu proxy</Button></div>

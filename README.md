@@ -1,11 +1,11 @@
-﻿# Viral Studio
+# Viral Studio
 
 Viral Studio is a Windows desktop app for research, AI video production, timeline editing, Facebook Page management, post planning and Meta publishing preparation.
 
 ## Download for Windows
 
-- Portable v0.5.6: `release/Viral Studio 0.5.6.exe`
-- Installer v0.5.6: `release/Viral Studio Setup 0.5.6.exe`
+- Portable v0.5.13: `release/Viral Studio 0.5.13.exe`
+- Installer v0.5.13: `release/Viral Studio Setup 0.5.13.exe`
 - SHA-256 checksums: `release/SHA256SUMS.txt`
 
 The desktop app starts with a version/loading screen, uses the Viral Studio icon, and stores user data in `Viral Data`; an installed upgrade can read legacy `Dropship Data` automatically.
@@ -52,6 +52,6 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Viral Studio project. The current verified local build is v0.5.6. See [CHECKPOINT_v0.5.6.md](CHECKPOINT_v0.5.6.md) for the next-session handoff, validation commands and safe continuation rules.
+This repository is the dedicated Viral Studio project. The current verified local build is v0.5.13. Previous artifacts are kept under versioned `release/archive-*` folders for reference.
 
 

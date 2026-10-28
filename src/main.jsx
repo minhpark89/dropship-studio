@@ -100,6 +100,7 @@ function App() {
   const [projectModal, setProjectModal] = useState(false);
   const [newName, setNewName] = useState("");
   const [sidebar, setSidebar] = useState(true);
+  const [renderFocus, setRenderFocus] = useState({ batchIds: [], researchId: "" });
   const notify = useCallback(
     (message, type = "success") => setToast({ message, type, id: Date.now() }),
     [],
@@ -160,10 +161,23 @@ function App() {
       ].includes(job.status),
     ).length || 0;
   const Page = pages[tab];
-  const navigate = async (destination) => {
+  const navigate = async (destination, options = {}) => {
     const state = await run(() => api("/state"));
     if (state) setData(state);
+    setRenderFocus(
+      destination === "editor"
+        ? {
+            batchIds: Array.isArray(options.focusBatchIds)
+              ? options.focusBatchIds.filter(Boolean)
+              : options.focusBatchId
+                ? [options.focusBatchId]
+                : [],
+            researchId: options.researchId || "",
+          }
+        : { batchIds: [], researchId: "" },
+    );
     setTab(destination);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
   };
   return (
     <div className={`app ${sidebar ? "" : "collapsed"}`}>
@@ -279,6 +293,7 @@ function App() {
               notify={notify}
               run={run}
               navigate={navigate}
+              renderFocus={tab === "editor" ? renderFocus : undefined}
             />
           ) : (
             <div className="loading-screen">
