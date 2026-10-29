@@ -26,12 +26,13 @@ function safeLlmFailure(error) {
   return message.slice(0, 240) || "invalid JSON response";
 }
 
-export async function requestJsonContent(store, system, input, { fetchImpl = globalThis.fetch, signal } = {}) {
+export async function requestJsonContent(store, system, input, { fetchImpl = globalThis.fetch, signal, timeoutSeconds } = {}) {
   const settings = llmSettingsSchema.parse(store.state.settings.llm || {});
   if (!settings.enabled) throw new StudioError("Enable and test the LLM in Settings first.", "LLM_DISABLED", 409);
   const endpoint = normalizeLlmEndpoint(settings.endpoint);
   const url = `${endpoint}/chat/completions`;
-  const timeout = AbortSignal.timeout(settings.timeoutSeconds * 1000);
+  const requestTimeoutSeconds = Math.max(10, Math.min(600, Number(timeoutSeconds || settings.timeoutSeconds)));
+  const timeout = AbortSignal.timeout(requestTimeoutSeconds * 1000);
   const headers = { "content-type": "application/json", accept: "application/json" };
   if (settings.apiKey) headers.authorization = `Bearer ${settings.apiKey}`;
   try {
@@ -49,6 +50,9 @@ export async function requestJsonContent(store, system, input, { fetchImpl = glo
     return parsed;
   } catch (error) {
     if (error instanceof StudioError) throw error;
+    if (timeout.aborted) {
+      throw new StudioError(`LLM timed out after ${requestTimeoutSeconds} seconds while generating content.`, "LLM_TIMEOUT", 504);
+    }
     if (signal?.aborted) throw signal.reason;
     throw new StudioError(`LLM did not return valid content: ${safeLlmFailure(error)}. Test the saved model in Settings, then retry.`, "LLM_INVALID_RESPONSE", 502);
   }

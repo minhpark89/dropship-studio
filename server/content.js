@@ -6,6 +6,7 @@ import { readArticleText } from "./article-text.js";
 import { StudioError } from "./store.js";
 
 const generationInput = z.object({projectId:z.string().uuid(),mediaId:z.string().uuid().optional(),contentType:z.enum(["news","product"]),researchId:z.string().uuid().nullable().optional(),title:z.string().max(200).default(""),productBrief:z.string().max(4000).default(""),linkUrl:z.string().max(2000).default("")});
+const CONTENT_LLM_TIMEOUT_SECONDS = 300;
 
 function link(value) {
   if (!value) return "";
@@ -120,7 +121,7 @@ export async function generateContent(store, raw, options = {}) {
   if (media && media.projectId && media.projectId !== input.projectId) throw new StudioError("Use media from this project.","MEDIA_PROJECT_MISMATCH");
   const meta = media?.production || {};
   const defaults = store.state.settings.content || {};
-  const llm = options.llm || ((system,data)=>requestJsonContent(store,system,data,options));
+  const llm = options.llm || ((system,data)=>requestJsonContent(store,system,data,{...options,timeoutSeconds:Math.max(CONTENT_LLM_TIMEOUT_SECONDS,Number(options.timeoutSeconds || 0))}));
   if (input.contentType === "product") {
     const storeUrl = link(input.linkUrl || meta.productUrl || defaults.storeUrl);
     const generated = await llm("Return title and firstComment. Write a concise first comment for the supplied product video. Use only the supplied product facts. No article, no invented discount, price, testimonial, medical claim or URL. The app will append the real store link.", {title:input.title || meta.title || media?.name,productBrief:input.productBrief || meta.productBrief || "",storeName:defaults.storeName || ""});
