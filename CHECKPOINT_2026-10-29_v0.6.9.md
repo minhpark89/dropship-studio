@@ -20,8 +20,10 @@ The source metadata already identified the product as Viral Studio, but an old `
 
 - `npm run pack:release` passed from a clean `release/win-unpacked` directory.
 - `node tests/desktop.mjs --packaged` passed with packaged version `0.6.9`.
+- `npm test` passed all 171 tests.
 - FFmpeg, FFprobe and the browser runtime were available in the packaged app.
 - The old unpacked 0.6.7 executable was removed before packaging.
+- The v0.6.9 installer completed with exit code 0; the installed executable reports ProductName `Viral Studio` and file version `0.6.9`.
 
 ## Installation note
 
