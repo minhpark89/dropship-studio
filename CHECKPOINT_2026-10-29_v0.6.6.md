@@ -1,4 +1,4 @@
-# Viral Studio v0.6.6 checkpoint
+# Viral Studio v0.6.7 checkpoint
 
 ## Vấn đề đã sửa
 
@@ -10,13 +10,14 @@ Nhóm Page có Page Meta và token hợp lệ nhưng không có Page local nên 
 - Content có video, caption, first comment và article body hợp lệ được lấy theo thứ tự tạo và đưa vào slot nhóm.
 - Lịch nhóm dùng `scheduleConfig.timezone`, mặc định `Asia/Bangkok`.
 - Hàng chờ có thể chọn nhóm Auto Post để `Đăng ngay`; không cần chọn Page thủ công cho từng bài.
+- Scheduler không xếp thêm slot nếu nhóm còn bài scheduled trong tương lai, tránh nhân bản lịch mỗi vòng kiểm tra.
 - `Page & bài đăng`/`Bài đăng & trạng thái` chỉ hiển thị trạng thái hàng chờ, lịch, lỗi và lịch sử Meta; video/bìa vẫn ở Thư viện.
 
 ## Release
 
-- Portable: `release/Viral Studio 0.6.6.exe`
-- Installer: `release/Viral Studio Setup 0.6.6.exe`
-- Git tag: `v0.6.6`
+- Portable: `release/Viral Studio 0.6.7.exe`
+- Installer: `release/Viral Studio Setup 0.6.7.exe`
+- Git tag: `v0.6.7`
 - GitHub Release phải có cả portable, installer, blockmap và `latest.yml`.
 
 ## Kiểm chứng

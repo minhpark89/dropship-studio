@@ -294,6 +294,8 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   const dailyLimit = Math.max(1, Number(limit || config.dailyLimit || config.times.length) || config.times.length);
   const today = localScheduleKey(Date.now(), config.timezone);
   const existingToday = (store.state.socialPosts || []).filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && localScheduleKey(post.scheduledAt, config.timezone) === today).length;
+  const hasFutureSlot = (store.state.socialPosts || []).some((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && Date.parse(post.scheduledAt) > Date.now());
+  if (hasFutureSlot) return { group, scheduled: [] };
   const capacity = Math.max(0, dailyLimit - existingToday);
   if (!capacity) return { group, scheduled: [] };
   const candidates = (store.state.socialPosts || [])
