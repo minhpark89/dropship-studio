@@ -63,6 +63,27 @@ _verify_news_0.png
 _verify_news_1.png
 ```
 
+The recorded old release candidates are:
+
+```text
+release/Viral Studio 0.6.0.exe
+release/Viral Studio 0.6.2.exe
+release/Viral Studio 0.6.3.exe
+release/Viral Studio 0.6.4.exe
+release/Viral Studio 0.6.5.exe
+release/Viral Studio 0.6.6.exe
+release/Viral Studio 0.6.7.exe
+release/Viral Studio Setup 0.6.4.exe
+release/Viral Studio Setup 0.6.4.exe.blockmap
+release/Viral Studio Setup 0.6.5.exe
+release/Viral Studio Setup 0.6.5.exe.blockmap
+release/Viral Studio Setup 0.6.6.exe
+release/Viral Studio Setup 0.6.6.exe.blockmap
+release/Viral Studio Setup 0.6.7.exe
+release/Viral Studio Setup 0.6.7.exe.blockmap
+release/win-unpacked.tmp/
+```
+
 Source code, Git history, checkpoints, project files, `Viral Data`/`Dropship Data`, current v0.6.8 artifacts, course files, research assets, and any media whose use cannot be ruled out are preserved.
 
 ## Resume procedure
