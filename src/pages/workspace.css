@@ -273,6 +273,20 @@
   .render-switcher { padding: 18px; }
 }
 
+/* Page & bài đăng is a queue/status screen.  Page groups, token pools and
+   manual post editing live in Channels & Tokens / Content Studio; keeping the
+   legacy editor cards here made the same video appear twice. */
+.social-page > .social-heading-actions,
+.social-page > .meta-management,
+.social-page > .social-connection[aria-label="Meta connector"],
+.social-page > .social-layout {
+  display: none;
+}
+
+.social-page .social-distribution-intro {
+  margin-bottom: 14px;
+}
+
 /* Page & token is a control surface: the page itself stays fixed and only
    the active list can scroll. This keeps the important actions in view even
    when Meta returns dozens of Pages or tokens. */

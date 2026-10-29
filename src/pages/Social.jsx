@@ -432,8 +432,8 @@ export function SocialPage({ data, project, run, notify }) {
       <div className="page-heading">
         <div>
           <div className="eyebrow">PAGE &amp; CONTENT</div>
-          <h1>Quản lý Page và bài đăng.</h1>
-          <p>Chuẩn bị, duyệt và xuất gói đăng cho công cụ bên ngoài theo cách có kiểm soát.</p>
+          <h1>Hàng chờ &amp; trạng thái đăng.</h1>
+          <p>Bài đủ Content sẽ vào hàng chờ; nhóm Page đã bật Auto Post tự lấy video theo khung giờ. Video và bìa chỉ quản lý trong Thư viện.</p>
         </div>
         <div className="social-heading-actions">
           <Button onClick={() => setPageDialog({ mode: "create", page: null })}><Plus size={15} /> Thêm Page</Button>
