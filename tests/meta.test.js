@@ -327,7 +327,10 @@ test("Meta Reel publish is explicit and idempotent after preflight", async () =>
     assert.equal(firstBody.permalink, "https://www.facebook.com/post-1");
     assert.equal(firstBody.firstCommentStatus, "published");
     assert.equal(firstBody.removedFromQueue, true);
+    assert.equal(firstBody.mediaCleanup.removed, true);
     assert.equal(store.state.socialPosts.some((item) => item.id === post.id), false);
+    assert.equal(store.state.media.some((item) => item.id === media.id), false);
+    assert.equal(await fs.access(mediaFile).then(() => true, () => false), false);
     assert.equal(store.state.settings.meta.publications[0].externalPostId, "post-1");
     const second = await jsonRequest("/api/meta/publish/reel", { postId: post.id, idempotencyKey: "publish-test-123" });
     assert.equal(second.status, 200);
@@ -382,6 +385,8 @@ test("Meta keeps a Reel in the queue when first comment fails and retries only t
     assert.equal(firstBody.removedFromQueue, false);
     assert.equal(firstBody.firstCommentError, "Graph comment failed");
     assert.equal(store.state.socialPosts.some((item) => item.id === post.id), true);
+    assert.equal(store.state.media.some((item) => item.id === media.id), true);
+    assert.equal(await fs.access(mediaFile).then(() => true, () => false), true);
     assert.equal(store.state.socialPosts[0].automationError, "Graph comment failed");
     const second = await jsonRequest("/api/meta/publish/reel", { postId: post.id, idempotencyKey: "comment-retry-123" });
     assert.equal(second.status, 200);
@@ -389,7 +394,10 @@ test("Meta keeps a Reel in the queue when first comment fails and retries only t
     assert.equal(secondBody.status, "published");
     assert.equal(secondBody.firstCommentStatus, "published");
     assert.equal(secondBody.removedFromQueue, true);
+    assert.equal(secondBody.mediaCleanup.removed, true);
     assert.equal(store.state.socialPosts.some((item) => item.id === post.id), false);
+    assert.equal(store.state.media.some((item) => item.id === media.id), false);
+    assert.equal(await fs.access(mediaFile).then(() => true, () => false), false);
     assert.deepEqual(calls, ["start", "upload", "finish", "comment", "comment"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));

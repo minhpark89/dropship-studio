@@ -210,3 +210,35 @@ test("an enabled Page group automatically takes warehouse drafts into its daily 
   assert.ok(Date.parse(post.scheduledAt) > Date.now());
 });
 
+test("an enabled Page group takes a completed generated video even when Content was created manually", async () => {
+  const { store, project } = await fixture();
+  const page = store.add("socialPages", { name: "Manual Content Page", platform: "facebook", externalId: "444444", url: "https://facebook.com/manual-content", timezone: "Asia/Bangkok", notes: "", archived: false, revision: 1 });
+  const mediaFile = path.join(store.root, "media", "generated-manual.mp4");
+  await fsp.writeFile(mediaFile, Buffer.from("generated-video"));
+  const media = store.add("media", { projectId: project.id, kind: "video", name: "Generated manual.mp4", file: mediaFile, thumbnail: null, generated: true, mediaType: "product-video" });
+  const now = new Date(Date.now() + 120_000);
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const group = { id: "group_manual", name: "Manual content", pageIds: [page.externalId], scheduleConfig: { times: [time], staggerMinutes: 0, dailyLimit: 1, enabled: true, autoPublish: true } };
+  store.state.settings.meta.pageGroups = [group];
+  store.state.settings.meta.tokenGroups = [];
+  const post = store.add("socialPosts", {
+    projectId: project.id,
+    pageId: "",
+    pageGroupId: "",
+    contentType: "product",
+    title: "Manual Content",
+    caption: "Ready to post.",
+    firstComment: "Shop now: https://shop.example/product",
+    mediaIds: [media.id],
+    scheduledAt: null,
+    status: "draft",
+    revision: 1,
+    automationSource: "",
+  });
+  const result = autoScheduleWarehousePosts(store, group.id);
+  assert.equal(result.scheduled.length, 1);
+  assert.equal(result.scheduled[0].id, post.id);
+  assert.equal(post.pageId, page.id);
+  assert.equal(post.automationSource, "daily-automation");
+});
+

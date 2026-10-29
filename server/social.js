@@ -10,6 +10,7 @@ import {
   socialRevisionSchema,
 } from "../shared/social-contracts.js";
 import { createPostPackage, packageFilePath, validatePackageFileName } from "./social-package.js";
+import { isPublishableVideo } from "../shared/output-media.js";
 
 const mediaKinds = new Set(["image", "video"]);
 
@@ -228,9 +229,11 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   const candidates = (store.state.socialPosts || [])
     .filter((post) => {
       if (!["draft", "ready"].includes(post.status) || post.pageGroupId || !post.mediaIds?.length) return false;
-      if (!["render-warehouse", "warehouse-sync", "news-render"].includes(post.automationSource)) return false;
       if (post.automationError) return false;
       if (!String(post.firstComment || "").trim()) return false;
+      const media = store.state.media.find((item) => item.id === post.mediaIds[0]);
+      const legacyWarehouseSource = ["render-warehouse", "warehouse-sync", "news-render"].includes(post.automationSource);
+      if (!isPublishableVideo(media, store.state.jobs || []) && !legacyWarehouseSource) return false;
       if (post.contentType === "news") {
         return Boolean(String(post.caption || "").trim() && String(post.articleBody || "").trim());
       }

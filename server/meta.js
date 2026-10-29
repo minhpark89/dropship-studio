@@ -29,6 +29,29 @@ function safeMessage(value, ...secrets) {
   return secrets.filter(Boolean).reduce((current, secret) => current.split(String(secret)).join("[redacted]"), message);
 }
 
+async function cleanupPublishedMedia(store, mediaId, postId) {
+  const media = store.state.media.find((item) => item.id === mediaId);
+  if (!media) return { removed: false, reason: "media_not_found" };
+  const inTimeline = store.state.projects.some((project) =>
+    project.timeline.clips.some((clip) => clip.mediaId === media.id) ||
+    project.timeline.images.some((image) => image.mediaId === media.id) ||
+    project.timeline.music?.mediaId === media.id,
+  );
+  const inJob = store.state.jobs.some((job) =>
+    ["queued", "scheduled", "preparing", "submitting", "rendering", "downloading"].includes(job.status) &&
+    String(JSON.stringify(job.payload) || "").includes(media.id),
+  );
+  const inSocialPost = store.state.socialPosts.some((post) => post.id !== postId && post.mediaIds?.includes(media.id));
+  if (inTimeline || inJob || inSocialPost) return { removed: false, reason: "media_still_referenced" };
+  try {
+    await Promise.all([media.file, media.thumbnail, media.previewFile].filter(Boolean).map((file) => fs.rm(file, { force: true })));
+    store.state.media = store.state.media.filter((item) => item.id !== media.id);
+    return { removed: true, mediaId: media.id, name: media.name || "" };
+  } catch (error) {
+    return { removed: false, reason: "media_cleanup_failed", error: safeMessage(error.message) };
+  }
+}
+
 function publicPage(page) {
   const bindings = Object.values(page.tokenBindings || {});
   const verified = bindings.filter((binding) => binding?.status === "VERIFIED" && binding.pageToken);
@@ -1082,7 +1105,8 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
         store.save();
         return { ...retryRecord, post: { ...post } };
       }
-      const recovered = { ...existing, status: "published", firstCommentStatus: "published", removedFromQueue: true };
+      const mediaCleanup = await cleanupPublishedMedia(store, post.mediaIds?.[0], post.id);
+      const recovered = { ...existing, status: "published", firstCommentStatus: "published", removedFromQueue: true, mediaCleanup };
       delete recovered.firstCommentError;
       meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(recovered).slice(-200);
       store.state.socialPosts = store.state.socialPosts.filter((item) => item.id !== post.id);
@@ -1111,7 +1135,10 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
       firstCommentStatus = "error";
       firstCommentError = safeMessage(error.message, page.accessToken);
     }
-    const record = { idempotencyKey: parsedKey, status: firstCommentError ? "published_comment_error" : "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus, ...(firstCommentError ? { firstCommentError } : {}), removedFromQueue: !firstCommentError, publishedAt: new Date().toISOString() };
+    const mediaCleanup = firstCommentError
+      ? { removed: false, reason: "first_comment_failed" }
+      : await cleanupPublishedMedia(store, post.mediaIds?.[0], post.id);
+    const record = { idempotencyKey: parsedKey, status: firstCommentError ? "published_comment_error" : "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus, ...(firstCommentError ? { firstCommentError } : {}), removedFromQueue: !firstCommentError, mediaCleanup, publishedAt: new Date().toISOString() };
     meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(record).slice(-200);
     if (firstCommentError) {
       Object.assign(post, {
