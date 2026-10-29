@@ -287,6 +287,18 @@
   margin-bottom: 14px;
 }
 
+.pages-post-auto-target {
+  color: var(--muted, #93a4bd);
+  font-size: 12px;
+  max-width: 220px;
+}
+
+.pages-schedule-timezone-note {
+  margin: 10px 0 0;
+  color: var(--muted, #93a4bd);
+  font-size: 12px;
+}
+
 /* Page & token is a control surface: the page itself stays fixed and only
    the active list can scroll. This keeps the important actions in view even
    when Meta returns dozens of Pages or tokens. */

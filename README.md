@@ -4,8 +4,8 @@ Viral Studio is a Windows desktop app for research, AI video production, timelin
 
 ## Download for Windows
 
-- Portable v0.6.5: `release/Viral Studio 0.6.5.exe`
-- Installer v0.6.5: `release/Viral Studio Setup 0.6.5.exe`
+- Portable v0.6.6: `release/Viral Studio 0.6.6.exe`
+- Installer v0.6.6: `release/Viral Studio Setup 0.6.6.exe`
 - SHA-256 checksums: `release/SHA256SUMS.txt`
 
 The desktop app starts with a version/loading screen, uses the Viral Studio icon, and stores user data in `Viral Data`; an installed upgrade can read legacy `Dropship Data` automatically.
@@ -52,6 +52,6 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Viral Studio project. The current verified local build is v0.6.5. Previous artifacts are kept under versioned `release/archive-*` folders for reference.
+This repository is the dedicated Viral Studio project. The current verified local build is v0.6.6. Previous artifacts are kept under versioned `release/archive-*` folders for reference.
 
 

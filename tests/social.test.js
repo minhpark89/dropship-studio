@@ -169,6 +169,35 @@ test("Meta Pages sync into local channels and a Page group schedules warehouse p
   assert.equal(Date.parse(scheduled.scheduled[1].scheduledAt) - Date.parse(scheduled.scheduled[0].scheduledAt), 600_000);
 });
 
+test("an enabled Page group materializes Meta Pages and schedules drafts without manual Page binding", async () => {
+  const { store, project, media } = await fixture();
+  const now = new Date(Date.now() + 120_000);
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  store.state.settings.meta.pages = [{ id: "555555", name: "Meta-only Page" }];
+  const group = { id: "group_meta_only", name: "Meta only", pageIds: ["555555"], scheduleConfig: { times: [time], timezone: "Asia/Bangkok", dailyLimit: 1, enabled: true, autoPublish: true } };
+  store.state.settings.meta.pageGroups = [group];
+  const post = store.add("socialPosts", {
+    projectId: project.id,
+    pageId: "",
+    pageGroupId: "",
+    contentType: "product",
+    title: "Meta-only warehouse draft",
+    caption: "Ready for automatic posting.",
+    firstComment: "Read more: https://example.test/article",
+    mediaIds: [media.id],
+    scheduledAt: null,
+    status: "draft",
+    revision: 1,
+    automationSource: "render-warehouse",
+  });
+  const result = autoScheduleWarehousePosts(store, group.id);
+  assert.equal(result.scheduled.length, 1);
+  assert.equal(store.state.socialPages.length, 1);
+  assert.equal(post.pageId, store.state.socialPages[0].id);
+  assert.equal(post.pageGroupId, group.id);
+  assert.equal(post.status, "scheduled");
+});
+
 test("an enabled Page group automatically takes warehouse drafts into its daily slots", async () => {
   const { store, project, media } = await fixture();
   const page = store.add("socialPages", { name: "Automation Page", platform: "facebook", externalId: "333333", url: "https://facebook.com/automation", timezone: "Asia/Bangkok", notes: "", archived: false, revision: 1 });

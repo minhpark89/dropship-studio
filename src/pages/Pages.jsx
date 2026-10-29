@@ -77,6 +77,7 @@ export function DistributionPanel({ data, notify, projectId = "" }) {
   const [busy, setBusy] = useState("");
   const pages = (data.socialPages || []).filter((page) => !page.archived);
   const groups = data.settings?.meta?.pageGroups || [];
+  const autoGroups = groups.filter((group) => group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false && group.scheduleConfig?.times?.length);
   const tokenGroups = data.settings?.meta?.tokenGroups || [];
   const publications = (data.settings?.meta?.publications || [])
     .filter((record) => !projectId || !record.projectId || record.projectId === projectId)
@@ -113,6 +114,9 @@ export function DistributionPanel({ data, notify, projectId = "" }) {
 
   useEffect(() => setPosts(projectPosts), [data.socialPosts, projectId]);
   useEffect(() => setSelectedIds((current) => current.filter((id) => posts.some((post) => post.id === id))), [posts]);
+  useEffect(() => {
+    if (!groupId && autoGroups.length === 1) setGroupId(autoGroups[0].id);
+  }, [autoGroups, groupId]);
 
   const refresh = async () => {
     if (busy) return;
@@ -146,11 +150,12 @@ export function DistributionPanel({ data, notify, projectId = "" }) {
     if (result) setPosts((current) => current.map((item) => item.id === result.id ? result : item));
   };
   const publishNow = async (post) => {
-    if (!post.pageId) {
+    const targetGroupId = post.pageGroupId || groupId || autoGroups[0]?.id || "";
+    if (!post.pageId && !targetGroupId) {
       notify("Chọn Page trước khi đăng ngay.", "error");
       return;
     }
-    const result = await action("now:" + post.id, () => api("/social/posts/" + post.id + "/publish-now", { pageId: post.pageId, revision: post.revision, tokenGroupId: tokenGroupId || undefined }, "POST"), "Đã đưa bài vào hàng đăng; Meta scheduler sẽ xử lý.");
+    const result = await action("now:" + post.id, () => api("/social/posts/" + post.id + "/publish-now", { pageId: post.pageId || undefined, pageGroupId: targetGroupId || undefined, revision: post.revision, tokenGroupId: tokenGroupId || undefined }, "POST"), "Đã đưa bài vào hàng đăng; Meta scheduler sẽ xử lý.");
     if (result) setPosts((current) => current.map((item) => item.id === result.id ? result : item));
   };
   const schedule = async () => {
@@ -194,19 +199,20 @@ export function DistributionPanel({ data, notify, projectId = "" }) {
           <div><strong>{postCounts.error}</strong><span>Lỗi cần xử lý</span></div>
         </div>
         <div className="pages-post-toolbar">
-          <div className="pages-post-toolbar-heading"><strong>Danh sách bài đăng</strong><small>Chọn bài đủ Content để xếp lịch thủ công; Auto Post vẫn tự nhận bài mới.</small></div>
+          <div className="pages-post-toolbar-heading"><strong>Danh sách bài đăng</strong><small>Nhóm Auto Post tự lấy video và Content đủ điều kiện theo thứ tự. Chỉ chọn bài khi muốn xếp lịch riêng.</small></div>
           <div className="pages-post-toolbar-controls">
             <label><span>Trạng thái</span><select value={postFilter} onChange={(event) => setPostFilter(event.target.value)}><option value="all">Tất cả ({postCounts.all})</option><option value="needs_content">Thiếu Content ({postCounts.needs_content})</option><option value="draft">Bản nháp ({postCounts.draft})</option><option value="ready">Sẵn sàng ({postCounts.ready})</option><option value="scheduled">Đã hẹn giờ ({postCounts.scheduled})</option><option value="publishing">Đang đăng ({postCounts.publishing})</option><option value="error">Lỗi ({postCounts.error})</option><option value="published">Đã đăng Meta ({postCounts.published})</option></select></label>
             <label className="pages-post-search"><span>Tìm bài</span><div><Search size={14} /><input value={postSearch} onChange={(event) => setPostSearch(event.target.value)} placeholder="Tiêu đề, Page hoặc lỗi..." /></div></label>
           </div>
         </div>
         <div className="pages-schedule-toolbar">
-          <label><span>Nhóm Page</span><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Chọn nhóm để xếp lịch</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.pageIds.length} Page · {group.scheduleConfig?.times?.length ? group.scheduleConfig.times.join(", ") : "giờ tùy chọn"}</option>)}</select></label>
+          <label><span>Nhóm Page</span><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Chọn nhóm để xếp lịch</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.pageIds.length} Page · {group.scheduleConfig?.times?.length ? group.scheduleConfig.times.join(", ") : "giờ tùy chọn"} · {group.scheduleConfig?.timezone || "Asia/Bangkok"}</option>)}</select></label>
           <label><span>Token pool</span><select value={tokenGroupId} onChange={(event) => setTokenGroupId(event.target.value)}><option value="">Tự chọn token khỏe</option>{tokenGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
           <label><span>Bắt đầu <small>(trống = khung giờ nhóm)</small></span><input type="datetime-local" value={startAt} min={localDateTimeValue()} onChange={(event) => setStartAt(event.target.value)} /></label>
           <label><span>Cách nhau (phút)</span><input type="number" min="0" max="1440" value={staggerMinutes} onChange={(event) => setStaggerMinutes(event.target.value)} /></label>
           <Button variant="primary" onClick={schedule} busy={busy === "schedule"} disabled={!selectedIds.length || !groupId}><CalendarClock size={14} /> {"Xếp lịch " + (selectedIds.length ? "(" + selectedIds.length + ")" : "bài")}</Button>
         </div>
+        <p className="pages-schedule-timezone-note">Lịch nhóm dùng múi giờ <strong>{groups.find((group) => group.id === groupId)?.scheduleConfig?.timezone || "Asia/Bangkok"}</strong>. Auto Post tự gán Page Meta và lấy video theo thứ tự.</p>
         <div className="pages-post-list-heading"><div><strong>{visibleRows.length} bài hiển thị</strong><small>Đã chọn {selectedIds.length} bài đủ điều kiện</small></div><Button onClick={selectAll} disabled={!selectableRows.length}>{selectedIds.length === selectableRows.length && selectableRows.length ? "Bỏ chọn" : "Chọn bài đủ Content"}</Button></div>
         {visibleRows.length ? <div className="pages-post-list">{visibleRows.map((post) => {
           const state = postState(post);
@@ -225,7 +231,7 @@ export function DistributionPanel({ data, notify, projectId = "" }) {
               {error && <p className="pages-post-error">{error}</p>}
             </div>
             <div className={"pages-post-status " + state.key}><span><i />{state.label}</span><small>{post.isPublication ? "Meta" : post.automationAttempts ? String(post.automationAttempts) + " lần thử" : post.status}</small></div>
-            {!post.isPublication && <div className="pages-post-actions"><select aria-label={"Page cho " + post.title} value={post.pageId || ""} onChange={(event) => assignPage(post, event.target.value)} disabled={post.status === "published"}><option value="">Chưa gắn Page</option>{pages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><Button onClick={() => publishNow(post)} busy={busy === "now:" + post.id} disabled={!post.pageId || !complete || post.status === "published"}><Send size={12} /> Đăng ngay</Button></div>}
+            {!post.isPublication && <div className="pages-post-actions"><span className="pages-post-auto-target">{post.pageId ? page?.name : post.pageGroupId ? group?.name || "Nhóm Page" : autoGroups.length ? "Tự lấy theo nhóm Auto Post" : "Chưa bật nhóm Auto Post"}</span><Button onClick={() => publishNow(post)} busy={busy === "now:" + post.id} disabled={!complete || post.status === "published" || (!post.pageId && !groupId && !autoGroups.length)}><Send size={12} /> Đăng ngay</Button></div>}
           </article>;
         })}</div> : <Empty icon={ClipboardList} title={rows.length ? "Không có bài phù hợp" : "Chưa có bài đăng"}>Tạo Content trong Content Studio hoặc chờ video render hoàn tất; trạng thái sẽ xuất hiện ở đây.</Empty>}
       </div>
@@ -244,6 +250,7 @@ export function PagesPage({ data, notify }) {
   const [tokenForm, setTokenForm] = useState(blankMetaTokenForm);
   const [groupName, setGroupName] = useState("");
   const [groupTimes, setGroupTimes] = useState("");
+  const [groupTimezone, setGroupTimezone] = useState("Asia/Bangkok");
   const [groupStagger, setGroupStagger] = useState(15);
   const [groupDailyLimit, setGroupDailyLimit] = useState(0);
   const [groupAutomation, setGroupAutomation] = useState(false);
@@ -422,12 +429,13 @@ export function PagesPage({ data, notify }) {
       name: groupName,
       ...(kind === "token"
         ? { tokenIds: selectedIds, strategy: groupStrategy, maxPagesPerToken: Number(groupMaxPagesPerToken) || 0, autoAssign: true }
-        : { id: modal?.group?.id, pageIds: selectedIds, scheduleConfig: { times: splitTokens(groupTimes).filter((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time)), staggerMinutes: Number(groupStagger) || 15, dailyLimit: Number(groupDailyLimit) || 0, enabled: groupAutomation, autoPublish: groupAutomation, tokenGroupId: groupTokenGroupId || "" } }),
+        : { id: modal?.group?.id, pageIds: selectedIds, scheduleConfig: { times: splitTokens(groupTimes).filter((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time)), timezone: groupTimezone, staggerMinutes: Number(groupStagger) || 15, dailyLimit: Number(groupDailyLimit) || 0, enabled: groupAutomation, autoPublish: groupAutomation, tokenGroupId: groupTokenGroupId || "" } }),
     };
     const result = await action("group", () => api(`/meta/${kind}-groups`, body, "POST"), "Đã tạo nhóm.");
     if (result) {
       setGroupName("");
       setGroupTimes("");
+      setGroupTimezone("Asia/Bangkok");
       setGroupStagger(15);
       setGroupDailyLimit(0);
       setGroupAutomation(false);
@@ -447,6 +455,7 @@ export function PagesPage({ data, notify }) {
     const config = group?.scheduleConfig || {};
     setGroupName(group?.name || "");
     setGroupTimes(Array.isArray(config.times) ? config.times.join(", ") : "");
+    setGroupTimezone(config.timezone || "Asia/Bangkok");
     setGroupStagger(config.staggerMinutes || 15);
     setGroupDailyLimit(config.dailyLimit || 0);
     setGroupAutomation(config.enabled === true || config.autoPublish === true);

@@ -61,6 +61,78 @@ function normalizeScheduleTimes(value) {
     .filter((item) => /^([01]\d|2[0-3]):[0-5]\d$/.test(item)))].slice(0, 24);
 }
 
+function scheduleTimeZone(value) {
+  const candidate = String(value || "Asia/Bangkok").trim() || "Asia/Bangkok";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format();
+    return candidate;
+  } catch {
+    return "Asia/Bangkok";
+  }
+}
+
+function zonedParts(timestamp, timeZone = "Asia/Bangkok") {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: scheduleTimeZone(timeZone),
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, Number(part.value)]));
+  if (values.hour === 24) values.hour = 0;
+  return values;
+}
+
+function timeZoneOffset(timestamp, timeZone) {
+  const parts = zonedParts(timestamp, timeZone);
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - timestamp;
+}
+
+function zonedWallTimeToUtc(year, month, day, hour, minute, timeZone) {
+  const wall = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  let utc = wall - timeZoneOffset(wall, timeZone);
+  // Recalculate once after applying the offset so DST boundaries use the
+  // offset that is valid at the resulting instant.
+  utc = wall - timeZoneOffset(utc, timeZone);
+  return utc;
+}
+
+function scheduleCandidate(nowValue, dayOffset, hour, minute, timeZone) {
+  const current = zonedParts(nowValue, timeZone);
+  const date = new Date(Date.UTC(current.year, current.month - 1, current.day + dayOffset));
+  return zonedWallTimeToUtc(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), hour, minute, timeZone);
+}
+
+function ensureLocalPagesForGroup(store, pageIds) {
+  const metaPages = Array.isArray(store.state.settings?.meta?.pages) ? store.state.settings.meta.pages : [];
+  const localByExternalId = new Map(store.state.socialPages.filter((page) => page.externalId).map((page) => [String(page.externalId), page]));
+  let created = 0;
+  for (const rawId of [...new Set((pageIds || []).map(String).filter(Boolean))]) {
+    if (localByExternalId.has(rawId)) continue;
+    const source = metaPages.find((page) => String(page.id) === rawId);
+    if (!source) continue;
+    const page = store.add("socialPages", {
+      name: String(source.name || rawId).slice(0, 120),
+      platform: "facebook",
+      externalId: rawId,
+      url: `https://www.facebook.com/${rawId}`,
+      timezone: "Asia/Bangkok",
+      notes: "Tự tạo từ nhóm Page Meta để Auto Post có thể xếp lịch.",
+      archived: false,
+      avatar: source.avatar || "",
+      metaPageId: rawId,
+      revision: 1,
+    });
+    localByExternalId.set(rawId, page);
+    created += 1;
+  }
+  return created;
+}
+
 export function normalizeScheduleConfig(value, fallback = {}) {
   const input = value && typeof value === "object" ? value : {};
   const times = normalizeScheduleTimes(input.times ?? input.slots ?? fallback.times);
@@ -130,15 +202,13 @@ function nextGroupScheduleStart(group, startAt, nowValue = Date.now()) {
   }
   const times = normalizeScheduleTimes(group.scheduleConfig?.times);
   if (!times.length) throw new StudioError("Nhóm chưa có khung giờ đăng. Hãy đặt giờ hoặc nhập thời gian bắt đầu.", "GROUP_SCHEDULE_REQUIRED", 409);
-  const current = new Date(nowValue);
+  const timeZone = scheduleTimeZone(group.scheduleConfig?.timezone);
   const candidates = [];
   for (const dayOffset of [0, 1, 2]) {
     for (const time of times) {
       const [hours, minutes] = time.split(":").map(Number);
-      const candidate = new Date(current);
-      candidate.setDate(current.getDate() + dayOffset);
-      candidate.setHours(hours, minutes, 0, 0);
-      if (candidate.getTime() > nowValue) candidates.push(candidate.getTime());
+      const candidate = scheduleCandidate(nowValue, dayOffset, hours, minutes, timeZone);
+      if (candidate > nowValue) candidates.push(candidate);
     }
   }
   const result = Math.min(...candidates);
@@ -151,8 +221,9 @@ export function schedulePostsForGroup(store, groupId, { postIds = [], startAt = 
   if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
   const pageIds = [...new Set((group.pageIds || []).map(String))];
   if (!pageIds.length) throw new StudioError("Nhóm Page đang trống.", "GROUP_PAGES_EMPTY", 409);
+  ensureLocalPagesForGroup(store, pageIds);
   const localPages = pageIds.map((id) => store.state.socialPages.find((page) => String(page.externalId) === id && !page.archived)).filter(Boolean);
-  if (localPages.length !== pageIds.length) throw new StudioError("Hãy đồng bộ Page local từ Meta trước khi xếp lịch nhóm.", "PAGE_MAPPING_REQUIRED", 409);
+  if (localPages.length !== pageIds.length) throw new StudioError("Một số Page trong nhóm chưa có binding Meta hợp lệ.", "PAGE_MAPPING_REQUIRED", 409);
   const ids = [...new Set((Array.isArray(postIds) ? postIds : []).map(String))];
   if (!ids.length) throw new StudioError("Chọn ít nhất một video trong kho bài.", "POST_SELECTION_EMPTY", 422);
   const posts = ids.map((id) => store.require("socialPosts", id));
@@ -187,24 +258,22 @@ export function schedulePostsForGroup(store, groupId, { postIds = [], startAt = 
   return { group, scheduled: scheduled.map(({ post }) => post) };
 }
 
-function localScheduleKey(timestamp) {
-  const date = new Date(timestamp);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+function localScheduleKey(timestamp, timeZone = "Asia/Bangkok") {
+  const date = zonedParts(timestamp, timeZone);
+  return `${date.year}-${String(date.month).padStart(2, "0")}-${String(date.day).padStart(2, "0")}`;
 }
 
 function nextGroupSlots(group, used, count, nowValue = Date.now()) {
   const config = normalizeScheduleConfig(group.scheduleConfig);
   if (!config.times.length || !count) return [];
-  const current = new Date(nowValue);
+  const timeZone = scheduleTimeZone(config.timezone);
   const slots = [];
   for (let dayOffset = 0; dayOffset < 31 && slots.length < count; dayOffset += 1) {
     for (const time of config.times.slice().sort()) {
       const [hours, minutes] = time.split(":").map(Number);
-      const candidate = new Date(current);
-      candidate.setDate(current.getDate() + dayOffset);
-      candidate.setHours(hours, minutes, 0, 0);
-      if (candidate.getTime() <= nowValue) continue;
-      const iso = candidate.toISOString();
+      const candidate = scheduleCandidate(nowValue, dayOffset, hours, minutes, timeZone);
+      if (candidate <= nowValue) continue;
+      const iso = new Date(candidate).toISOString();
       if (used.has(iso)) continue;
       used.add(iso);
       slots.push(iso);
@@ -219,11 +288,12 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   const config = normalizeScheduleConfig(group.scheduleConfig);
   if (!config.enabled || !config.autoPublish || !config.times.length) return { group, scheduled: [] };
   const pageIds = [...new Set((group.pageIds || []).map(String))];
+  ensureLocalPagesForGroup(store, pageIds);
   const localPages = pageIds.map((id) => store.state.socialPages.find((page) => String(page.externalId) === id && !page.archived)).filter(Boolean);
   if (localPages.length !== pageIds.length) return { group, scheduled: [] };
   const dailyLimit = Math.max(1, Number(limit || config.dailyLimit || config.times.length) || config.times.length);
-  const today = localScheduleKey(Date.now());
-  const existingToday = (store.state.socialPosts || []).filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && localScheduleKey(post.scheduledAt) === today).length;
+  const today = localScheduleKey(Date.now(), config.timezone);
+  const existingToday = (store.state.socialPosts || []).filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && localScheduleKey(post.scheduledAt, config.timezone) === today).length;
   const capacity = Math.max(0, dailyLimit - existingToday);
   if (!capacity) return { group, scheduled: [] };
   const candidates = (store.state.socialPosts || [])
@@ -344,12 +414,19 @@ export function mountSocialRoutes(app, store) {
     const revision = z.number().int().positive().parse(req.body?.revision);
     assertRevision(post, revision);
     if (post.status === "published") throw new StudioError("Bài đã đăng không thể đăng lại.", "IMMUTABLE_PUBLISHED", 409);
-    const pageId = String(req.body?.pageId || post.pageId || "");
+    const requestedGroupId = String(req.body?.pageGroupId || req.body?.groupId || post.pageGroupId || "");
+    const group = requestedGroupId ? (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === requestedGroupId) : null;
+    if (group?.pageIds?.length) ensureLocalPagesForGroup(store, group.pageIds);
+    const groupPages = group?.pageIds?.length
+      ? group.pageIds.map((id) => store.state.socialPages.find((page) => String(page.externalId) === String(id) && !page.archived)).filter(Boolean)
+      : [];
+    const pageId = String(req.body?.pageId || post.pageId || groupPages[0]?.id || "");
     const page = pageId ? requirePage(store, pageId) : null;
     if (!page) throw new StudioError("Chọn Page trước khi đăng ngay.", "PAGE_REQUIRED", 409);
     checkPageActive(page, "scheduled");
     const changes = {
       pageId,
+      ...(requestedGroupId ? { pageGroupId: requestedGroupId } : {}),
       ...(req.body?.tokenGroupId ? { tokenGroupId: String(req.body.tokenGroupId) } : {}),
       status: "scheduled",
       scheduledAt: new Date(Date.now() + 3_000).toISOString(),
