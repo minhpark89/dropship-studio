@@ -84,6 +84,14 @@ release/Viral Studio Setup 0.6.7.exe.blockmap
 release/win-unpacked.tmp/
 ```
 
+Cleanup completed on 2026-10-29:
+
+- Removed all 15 listed release artifacts below v0.6.8.
+- Removed the stale `release/win-unpacked.tmp/` staging directory.
+- Removed all 14 listed root-level generated verification files.
+- Verified that `release/` now contains only the v0.6.8 portable executable, installer, blockmap, `latest.yml`, `SHA256SUMS.txt`, and the current `win-unpacked/` directory.
+- Preserved the root-level `Video+ảnh gốc_7_BN.mp4`, all project/application media, course files, research files, user data and source HTML.
+
 Source code, Git history, checkpoints, project files, `Viral Data`/`Dropship Data`, current v0.6.8 artifacts, course files, research assets, and any media whose use cannot be ruled out are preserved.
 
 ## Resume procedure
