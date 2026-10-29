@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { SocialScheduler } from "../server/social-scheduler.js";
+import { normalizeScheduleConfig } from "../server/social.js";
 
 function post(overrides = {}) {
   return {
@@ -14,6 +15,14 @@ function post(overrides = {}) {
     ...overrides,
   };
 }
+
+test("page group automation can be switched off explicitly", () => {
+  const enabled = normalizeScheduleConfig({ times: ["09:00"], enabled: true, autoPublish: true });
+  const disabled = normalizeScheduleConfig({ enabled: false, autoPublish: false }, enabled);
+  assert.equal(disabled.enabled, false);
+  assert.equal(disabled.autoPublish, false);
+  assert.deepEqual(disabled.times, ["09:00"]);
+});
 
 test("scheduler publishes due posts and waits for in-flight work on close", async () => {
   const due = post();

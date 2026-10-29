@@ -141,6 +141,8 @@ export function ContentPage({ data, project, notify, navigate }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [selectedPostIds, setSelectedPostIds] = useState([]);
+  const [bulkConcurrency, setBulkConcurrency] = useState(2);
+  const [bulkProgress, setBulkProgress] = useState(null);
   const [modal, setModal] = useState(null);
   const [previewMedia, setPreviewMedia] = useState(null);
   const [busy, setBusy] = useState("");
@@ -154,6 +156,7 @@ export function ContentPage({ data, project, notify, navigate }) {
 
   useEffect(() => {
     setSelectedPostIds([]);
+    setBulkProgress(null);
   }, [project.id, filter, search]);
 
   const media = useMemo(() => (data.media || [])
@@ -336,25 +339,47 @@ export function ContentPage({ data, project, notify, navigate }) {
   const bulkRegenerate = async () => {
     const targets = bulkPosts.filter((post) => post.contentType === "news");
     if (!targets.length || busy) return;
+    const concurrency = Math.max(1, Math.min(8, Number(bulkConcurrency) || 2));
     setBusy("bulk-regenerate");
+    setBulkProgress({ total: targets.length, completed: 0, succeeded: 0, failed: 0, active: 0, concurrency });
     let succeeded = 0;
     let failed = 0;
-    try {
-      for (const post of targets) {
+    let cursor = 0;
+    const worker = async () => {
+      while (true) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= targets.length) return;
+        const post = targets[index];
+        setBulkProgress((current) => current ? { ...current, active: current.active + 1 } : current);
         try {
           const result = await api(`/content/posts/${post.id}/regenerate`, {});
           setPosts((current) => current.map((item) => item.id === result.id ? result : item));
-          if (result.automationError) failed += 1;
-          else succeeded += 1;
+          if (result.automationError) {
+            failed += 1;
+            notify(`${post.title}: ${result.automationError}`, "error");
+          } else succeeded += 1;
         } catch (error) {
           failed += 1;
           notify(`${post.title}: ${error.message}`, "error");
+        } finally {
+          setBulkProgress((current) => current ? {
+            ...current,
+            completed: current.completed + 1,
+            succeeded,
+            failed,
+            active: Math.max(0, current.active - 1),
+          } : current);
         }
       }
+    };
+    try {
+      await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
     } finally {
       setBusy("");
       setSelectedPostIds([]);
     }
+    setBulkProgress({ total: targets.length, completed: targets.length, succeeded, failed, active: 0, concurrency });
     notify(`Đã xử lý ${targets.length} bài bằng LLM: ${succeeded} thành công${failed ? `, ${failed} lỗi (content cũ được giữ)` : ""}.`, failed ? "error" : undefined);
   };
   const bulkPublishWebsite = async () => {
@@ -404,6 +429,7 @@ export function ContentPage({ data, project, notify, navigate }) {
     {!activePages.length && <Notice>You can write and save drafts now. Assign a Page before approval. <button className="inline-link" onClick={() => navigate?.("pages")}>Open Channels</button></Notice>}
         {unassignedVideoGroups.length > 0 && <section className="content-video-inbox"><div className="hub-panel-heading"><div><span className="hub-kicker">READY FROM RENDER</span><h2>{unassignedVideoGroups.length} video group(s) cần tạo Content</h2><p>News sẽ tạo bài, đăng website và gắn URL chính xác vào first comment.</p></div></div>{unassignedVideoGroups.map(({ video, type, count }) => <article key={video.id}><Video size={24}/><div><strong>{video.production?.title || video.name}</strong><p>{type === "news" ? `News · bài viết website + first comment${count > 1 ? ` · ${count} bản render` : ""}` : `Product · first comment${count > 1 ? ` · ${count} bản render` : ""}`}</p></div><Button variant="primary" busy={busy===`write:${video.id}` || busy===`website:${video.id}`} disabled={Boolean(busy)} onClick={()=>writeForVideo(video)}><Sparkles size={15}/>{type === "news" ? "Tạo bài + đăng website" : "Tạo first comment"}</Button></article>)}</section>}
     <div className="content-toolbar"><div className="content-filter-tabs">{[["all", "Tất cả"], ["news", "News"], ["product", "Product"], ["needs-content", "Cần viết"], ["needs-website", "Cần đăng web"], ["needs-comment", "Thiếu first comment"], ["ready", "Đủ điều kiện"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}<b>{counts[value]}</b></button>)}</div><input aria-label="Tìm Content" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm tiêu đề, caption hoặc first comment…" /></div>
+    {filter === "needs-website" && projectPosts.length > 0 && <div className="content-bulk-controls"><label htmlFor="content-llm-concurrency">LLM threads<select id="content-llm-concurrency" value={bulkConcurrency} onChange={(event) => setBulkConcurrency(Number(event.target.value))} disabled={Boolean(busy)}>{[1, 2, 3, 4, 5, 6, 7, 8].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>{bulkProgress && <div className="content-bulk-progress"><strong>LLM {bulkProgress.completed}/{bulkProgress.total}</strong><span>{bulkProgress.active} running | {bulkProgress.succeeded} ok | {bulkProgress.failed} failed | {bulkProgress.concurrency} threads</span><progress max={bulkProgress.total} value={bulkProgress.completed} /></div>}</div>}
     {filter === "needs-website" && projectPosts.length > 0 && <div className="content-bulk-toolbar"><label className="content-select-toggle"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} /> <span>Select all {projectPosts.length} items</span></label><span className="content-bulk-hint">{selectedPosts.length ? `Selected ${selectedPosts.length} items` : "No selection = process all filtered News items"}</span><div className="content-bulk-actions"><Button busy={busy === "bulk-regenerate"} disabled={Boolean(busy)} onClick={bulkRegenerate}><Sparkles size={14} /> Regenerate LLM {selectedPosts.length ? `(${selectedPosts.length})` : "all"}</Button><Button variant="primary" busy={busy === "bulk-website"} disabled={Boolean(busy)} onClick={bulkPublishWebsite}><Send size={14} /> Publish website {selectedPosts.length ? `(${selectedPosts.length})` : "all"}</Button></div></div>}
     {projectPosts.length ? <div className="content-list">{projectPosts.map((post) => {
       const page = pages.find((item) => item.id === post.pageId);

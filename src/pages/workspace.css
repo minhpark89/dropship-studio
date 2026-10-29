@@ -102,6 +102,8 @@
 .hub-group-row:last-child { border-bottom: 0; }
 .hub-group-row strong { color: #e9f2ff; font-size: 13px; }
 .hub-group-row span, .hub-empty { color: #8095b5; font-size: 11px; }
+.page-group-auto-status { padding: 3px 6px; border: 1px solid #80664b; border-radius: 999px; color: #ffc180 !important; background: #382b23; font-size: 9px !important; font-weight: 800; letter-spacing: .04em; }
+.page-group-auto-status.on { border-color: #54865e; color: #b6e6b7 !important; background: #173523; }
 .hub-empty { margin: 0; line-height: 1.6; }
 .hub-picker { display: grid; gap: 7px; max-height: 260px; overflow: auto; margin: 14px 0; }
 .hub-picker label { display: flex; gap: 9px; align-items: center; padding: 9px; border: 1px solid #263852; border-radius: 8px; color: #c4d2e9; font-size: 12px; }
@@ -132,6 +134,13 @@
 .content-filter-tabs b { padding: 2px 5px; border-radius: 5px; color: #b8cae4; background: #253b5b; font-size: 10px; }
 .content-toolbar > input { max-width: 340px; }
 .content-bulk-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: -5px 0 15px; padding: 10px 12px; border: 1px solid #405e86; border-radius: 12px; color: #c8d8ee; background: #142640; }
+.content-bulk-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: -5px 0 9px; padding: 9px 12px; border: 1px solid #2d486c; border-radius: 10px; color: #b8cbe5; background: #0f1d32; font-size: 11px; }
+.content-bulk-controls label { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.content-bulk-controls select { width: 62px; padding: 5px 7px; border: 1px solid #466184; border-radius: 6px; color: #f5f8ff; background: #142640; }
+.content-bulk-progress { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.content-bulk-progress strong { color: #ffbd87; }
+.content-bulk-progress span { color: #8fa6c6; }
+.content-bulk-progress progress { width: 150px; height: 7px; accent-color: var(--hub-orange); }
 .content-select-toggle, .content-card-select { display: inline-flex; align-items: center; gap: 7px; color: #d9e7f8; font-size: 11px; font-weight: 700; cursor: pointer; }
 .content-select-toggle input, .content-card-select input { width: auto; accent-color: var(--hub-orange); }
 .content-bulk-hint { color: #8fa6c6; font-size: 11px; }

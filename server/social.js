@@ -66,7 +66,10 @@ export function normalizeScheduleConfig(value, fallback = {}) {
   const staggerMinutes = Math.max(0, Math.min(1440, Number(input.staggerMinutes ?? input.stagger_minutes ?? fallback.staggerMinutes ?? 15) || 0));
   const dailyLimitValue = Number(input.dailyLimit ?? input.postsPerDay ?? input.posts_per_day ?? fallback.dailyLimit ?? 0);
   const dailyLimit = Number.isFinite(dailyLimitValue) ? Math.max(0, Math.min(200, Math.floor(dailyLimitValue))) : 0;
-  const enabled = input.enabled === true || input.autoPublish === true || fallback.enabled === true;
+  const hasExplicitAutomation = Object.prototype.hasOwnProperty.call(input, "enabled") || Object.prototype.hasOwnProperty.call(input, "autoPublish");
+  const enabled = hasExplicitAutomation
+    ? input.enabled === true || input.autoPublish === true
+    : fallback.enabled === true || fallback.autoPublish === true;
   return {
     times,
     staggerMinutes,
