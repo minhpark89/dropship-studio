@@ -328,6 +328,8 @@ test("Meta Reel publish is explicit and idempotent after preflight", async () =>
     assert.equal(firstBody.firstCommentStatus, "published");
     assert.equal(firstBody.removedFromQueue, true);
     assert.equal(firstBody.mediaCleanup.removed, true);
+    assert.equal(firstBody.title, post.title);
+    assert.equal(firstBody.projectId, project.id);
     assert.equal(store.state.socialPosts.some((item) => item.id === post.id), false);
     assert.equal(store.state.media.some((item) => item.id === media.id), false);
     assert.equal(await fs.access(mediaFile).then(() => true, () => false), false);

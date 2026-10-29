@@ -115,10 +115,11 @@ try {
   report.checks.push("Channels workspace opens separately and creates local Page records");
   const localPanel = await page.locator(".pages-local-panel").boundingBox();
   assert.ok(localPanel && localPanel.y + localPanel.height <= 1000, `Page local panel is clipped: ${JSON.stringify(localPanel)}`);
-  await page.locator(".pages-tabs button").filter({ hasText: "Kho b" }).click();
+  await page.locator(".pages-tabs button").nth(3).click();
   await page.locator(".pages-distribution-view").waitFor();
-  assert.equal(await page.locator(".pages-render-rules").count(), 1);
-  report.checks.push("Page local panel fits the viewport and the Content warehouse tab exposes render rules");
+  assert.equal(await page.locator(".pages-post-toolbar").count(), 1);
+  assert.equal(await page.locator(".pages-warehouse-list").count(), 0);
+  report.checks.push("Page local panel fits the viewport and the post control tab hides duplicate video rows");
   await page.getByRole("button", { name: "Content Studio", exact: true }).click();
   await page.locator(".content-hub").waitFor();
   await page.getByRole("button", { name: "Content News", exact: true }).click();

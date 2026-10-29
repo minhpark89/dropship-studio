@@ -1083,6 +1083,10 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
       } catch (error) {
         const retryRecord = {
           ...existing,
+          postId: existing.postId || post.id,
+          projectId: existing.projectId || post.projectId,
+          title: existing.title || post.title,
+          contentType: existing.contentType || post.contentType,
           status: "published_comment_error",
           firstCommentStatus: "error",
           firstCommentError: safeMessage(error.message, page.accessToken),
@@ -1106,7 +1110,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
         return { ...retryRecord, post: { ...post } };
       }
       const mediaCleanup = await cleanupPublishedMedia(store, post.mediaIds?.[0], post.id);
-      const recovered = { ...existing, status: "published", firstCommentStatus: "published", removedFromQueue: true, mediaCleanup };
+      const recovered = { ...existing, postId: existing.postId || post.id, projectId: existing.projectId || post.projectId, title: existing.title || post.title, contentType: existing.contentType || post.contentType, status: "published", firstCommentStatus: "published", removedFromQueue: true, mediaCleanup };
       delete recovered.firstCommentError;
       meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(recovered).slice(-200);
       store.state.socialPosts = store.state.socialPosts.filter((item) => item.id !== post.id);
@@ -1138,7 +1142,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     const mediaCleanup = firstCommentError
       ? { removed: false, reason: "first_comment_failed" }
       : await cleanupPublishedMedia(store, post.mediaIds?.[0], post.id);
-    const record = { idempotencyKey: parsedKey, status: firstCommentError ? "published_comment_error" : "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus, ...(firstCommentError ? { firstCommentError } : {}), removedFromQueue: !firstCommentError, mediaCleanup, publishedAt: new Date().toISOString() };
+    const record = { idempotencyKey: parsedKey, postId: post.id, projectId: post.projectId, title: post.title, contentType: post.contentType, status: firstCommentError ? "published_comment_error" : "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus, ...(firstCommentError ? { firstCommentError } : {}), removedFromQueue: !firstCommentError, mediaCleanup, publishedAt: new Date().toISOString() };
     meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(record).slice(-200);
     if (firstCommentError) {
       Object.assign(post, {
