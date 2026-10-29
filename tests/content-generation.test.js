@@ -117,6 +117,61 @@ test("news render automation leaves a Content error that can be regenerated", as
   assert.match(regenerated.firstComment, /https:\/\/news\.example\.test/);
 });
 
+test("regenerating News auto-publishes through the saved website connection", async t => {
+  const options = {
+    articleReader: async () => "Officials confirmed the reported development.",
+    llm: async () => ({ title: "Verified news update", caption: "A verified update.", articleBody: "The report confirms the development and provides additional context for readers. Officials said the available evidence supports the update, while the published source contains the details readers should review before drawing further conclusions." }),
+  };
+  const { store, project, request } = await fixture(t, options);
+  options.websiteConfigured = () => true;
+  options.websitePublisher = async (postId, { revision }) => store.patch("socialPosts", postId, {
+    website: { siteId: "saved-site", status: "published", url: `https://news.example.test/blog/${postId}` },
+    revision: revision + 1,
+  });
+  const research = store.add("researchResults", {
+    projectId: project.id,
+    headline: "Verified news update",
+    articles: [{ title: "Verified source", source: "Agency", url: "https://agency.example.test/story", summary: "Confirmed details" }],
+  });
+  const media = store.add("media", { projectId: project.id, kind: "video", generated: true, name: "News broadcast.mp4", production: { contentType: "news", researchId: research.id, title: research.headline } });
+  const post = await createContentFromMedia(store, media.id, { source: "news-render", options });
+  const regenerated = await (await request(`/api/content/posts/${post.id}/regenerate`, {})).json();
+  assert.equal(regenerated.automationStatus, "published");
+  assert.equal(regenerated.website.status, "published");
+  assert.match(regenerated.website.url, /news\.example\.test/);
+});
+
+test("creating News from a rendered video uses auto-publish and returns website errors in the record", async t => {
+  const options = {
+    articleReader: async () => "Officials confirmed the reported development.",
+    llm: async () => ({ title: "Verified news update", caption: "A verified update.", articleBody: "The report confirms the development and provides additional context for readers. Officials said the available evidence supports the update, while the published source contains the details readers should review before drawing further conclusions." }),
+  };
+  const { store, project, request } = await fixture(t, options);
+  options.websiteConfigured = () => true;
+  options.websitePublisher = async (postId, { revision }) => store.patch("socialPosts", postId, {
+    website: { siteId: "saved-site", status: "published", url: `https://news.example.test/blog/${postId}` },
+    revision: revision + 1,
+  });
+  const research = store.add("researchResults", {
+    projectId: project.id,
+    headline: "Verified news update",
+    articles: [{ title: "Verified source", source: "Agency", url: "https://agency.example.test/story", summary: "Confirmed details" }],
+  });
+  const media = store.add("media", { projectId: project.id, kind: "video", generated: true, name: "News broadcast.mp4", production: { contentType: "news", researchId: research.id, title: research.headline } });
+  const response = await request(`/api/content/from-media/${media.id}`, {});
+  assert.equal(response.status, 201);
+  const published = await response.json();
+  assert.equal(published.automationStatus, "published");
+  assert.equal(published.website.status, "published");
+
+  options.websitePublisher = async () => { throw new Error("Website login could not be verified"); };
+  const otherMedia = store.add("media", { projectId: project.id, kind: "video", generated: true, name: "News broadcast 2.mp4", production: { contentType: "news", researchId: research.id, title: research.headline } });
+  const failed = await (await request(`/api/content/from-media/${otherMedia.id}`, {})).json();
+  assert.equal(failed.automationStatus, "website_error");
+  assert.match(failed.automationError, /login could not be verified/);
+  assert.ok(failed.articleBody);
+});
+
 test("news content carries a public research illustration into the article", async t => {
   const options = {
     articleReader: async () => "Confirmed launch details from the source.",

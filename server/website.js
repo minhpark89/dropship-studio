@@ -48,7 +48,8 @@ export class WebsiteService {
     const site={...publicData,baseUrl:data.baseUrl.replace(/\/+$/,""),hasPassword:true,lastTest:null};
     const settings=this.store.state.settings.website;
     settings.connections=previous?settings.connections.map(item=>item.id===site.id?site:item):[...settings.connections,site];
-    if(!settings.activeId)settings.activeId=site.id;
+    settings.activeId=site.id;
+    this.store.state.settings.content.articleWebsiteUrl=site.baseUrl;
     this.store.save();return site;
   }
   async import(source) {

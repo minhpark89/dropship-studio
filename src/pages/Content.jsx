@@ -302,13 +302,14 @@ export function ContentPage({ data, project, notify, navigate }) {
       pageId: activePages[0]?.id || "",
       contentType,
       researchId: video.production?.researchId || undefined,
-    }), contentType === "news" ? "Đã tạo bài News từ video." : "Đã tạo Content và first comment.");
+    }));
     if (!result) return;
-    let next = result;
-    if (contentType === "news" && result.articleBody) {
-      const published = await action(`website:${result.id}`, () => api(`/content/posts/${result.id}/website`, { revision: result.revision }), "Đã đăng bài News lên website và gắn URL vào first comment.");
-      if (published) next = published;
-    }
+    const next = result;
+    if (contentType === "news") {
+      if (result.automationStatus === "website_error") notify(`Content đã tạo nhưng website chưa đăng được: ${result.automationError}`, "error");
+      else if (result.website?.status === "published") notify("Đã tạo Content News và tự đăng website; URL đã được gắn vào first comment.");
+      else notify("Đã tạo Content News. Website chưa được tự đăng; kiểm tra cấu hình website hoặc Auto publish.");
+    } else notify("Đã tạo Content và first comment.");
     setPosts((current) => [next, ...current.filter((post) => post.id !== next.id)]);
   };
   const publishWebsite = async (post, forceRevision = false) => {
@@ -327,7 +328,8 @@ export function ContentPage({ data, project, notify, navigate }) {
     const result = await action(`regenerate:${post.id}`, () => api(`/content/posts/${post.id}/regenerate`, {}));
     if (result) {
       setPosts(current => current.map(item => item.id === result.id ? result : item));
-      notify(result.automationError ? "LLM chưa tạo được bản mới. Content cũ vẫn được giữ nguyên; hãy kiểm tra LLM trong Settings rồi thử lại." : "LLM đã tạo lại Content News. Hãy kiểm tra bài và publish website.", result.automationError ? "error" : undefined);
+      const failedStage = result.automationStatus === "website_error" ? "website" : result.automationError ? "llm" : "";
+      notify(failedStage === "website" ? `Content đã tạo nhưng website chưa đăng được: ${result.automationError}` : failedStage === "llm" ? "LLM chưa tạo được bản mới. Content cũ vẫn được giữ nguyên; hãy kiểm tra LLM trong Settings rồi thử lại." : "LLM đã tạo Content News và đã gửi website tự động.", failedStage ? "error" : undefined);
     }
   };
   const togglePostSelection = (postId) => {

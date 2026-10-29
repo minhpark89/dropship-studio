@@ -148,9 +148,15 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     res.json(await inspectMcImageSettings(store));
   });
 
-  mountSocialRoutes(app, store);
-  const contentService = mountContentRoutes(app, store);
   const websiteService = mountWebsiteRoutes(app, store);
+  mountSocialRoutes(app, store);
+  const contentService = mountContentRoutes(app, store, {
+    websiteConfigured: () => {
+      websiteService.selected();
+      return true;
+    },
+    websitePublisher: (postId, input) => websiteService.publish(postId, input),
+  });
   const metaService = mountMetaRoutes(app, store);
   queue.setNewsAutomation(async ({ job, media }) => {
     const existing = store.state.socialPosts.find(post => post.mediaIds?.includes(media.id));

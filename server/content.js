@@ -258,15 +258,33 @@ export async function createContentFromMedia(store, mediaId, { pageId = "", sour
 
 export function mountContentRoutes(app,store,options={}) {
   const pending=new Set();
+  const publishNewsIfConfigured = async (post) => {
+    if (post.contentType !== "news" || !post.articleBody?.trim() || store.state.settings.content?.autoPublishNews === false) return post;
+    if (typeof options.websitePublisher !== "function" || typeof options.websiteConfigured !== "function") return post;
+    try {
+      if (!options.websiteConfigured()) return post;
+    } catch {
+      return post;
+    }
+    try {
+      const published = await options.websitePublisher(post.id, { revision: post.revision });
+      return store.patch("socialPosts", published.id, { automationStatus: "published", automationError: null });
+    } catch (error) {
+      return store.patch("socialPosts", post.id, { automationStatus: "website_error", automationError: error.message || "Website publish failed." });
+    }
+  };
   app.post("/api/content/generate",async(req,res)=>res.json(await generateContent(store,req.body,options)));
   app.post("/api/content/from-media/:id",async(req,res)=>{
     const media=store.require("media",req.params.id);
     if (media.kind!=="video" || !media.generated) throw new StudioError("Choose a completed video from Library.","VIDEO_REQUIRED",422);
     const existing=store.state.socialPosts.find(post=>post.mediaIds?.includes(media.id));
-    if(existing) return res.json(existing);
+    if(existing) return res.json(await publishNewsIfConfigured(existing));
     if(pending.has(media.id)) throw new StudioError("Content is already being generated for this video.","CONTENT_BUSY",409);
     pending.add(media.id);
-    try { res.status(201).json(await createContentFromMedia(store, media.id, { pageId: req.body.pageId || "", source: req.body.source || "", contentType: req.body.contentType || "", researchId: req.body.researchId || "", options })); }
+    try {
+      const generated = await createContentFromMedia(store, media.id, { pageId: req.body.pageId || "", source: req.body.source || "", contentType: req.body.contentType || "", researchId: req.body.researchId || "", options });
+      res.status(201).json(await publishNewsIfConfigured(generated));
+    }
     finally { pending.delete(media.id); }
   });
   app.post("/api/content/posts/:id/regenerate", async (req, res) => {
@@ -274,7 +292,8 @@ export function mountContentRoutes(app,store,options={}) {
     if (post.website?.status === "published") throw new StudioError("Published article cannot be regenerated from this draft.", "ARTICLE_ALREADY_PUBLISHED", 409);
     const mediaId = post.mediaIds?.[0];
     if (!mediaId) throw new StudioError("Attach the completed news video before regenerating content.", "VIDEO_REQUIRED", 422);
-    res.json(await createContentFromMedia(store, mediaId, { pageId: post.pageId, source: post.automationSource || "content", contentType: post.contentType, force: true, options }));
+    const regenerated = await createContentFromMedia(store, mediaId, { pageId: post.pageId, source: post.automationSource || "content", contentType: post.contentType, force: true, options });
+    res.json(await publishNewsIfConfigured(regenerated));
   });
   app.post("/api/content/posts/:id/repair-images", async (req, res) => {
     const post = store.require("socialPosts", req.params.id);
