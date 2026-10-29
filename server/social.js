@@ -294,6 +294,24 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   const dailyLimit = Math.max(1, Number(limit || config.dailyLimit || config.times.length) || config.times.length);
   const today = localScheduleKey(Date.now(), config.timezone);
   const existingToday = (store.state.socialPosts || []).filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && localScheduleKey(post.scheduledAt, config.timezone) === today).length;
+  const futureAutoPosts = (store.state.socialPosts || [])
+    .filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.automationSource === "daily-automation" && post.scheduledAt && Date.parse(post.scheduledAt) > Date.now())
+    .sort((left, right) => Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt));
+  if (futureAutoPosts.length) {
+    const expectedSlots = nextGroupSlots(group, new Set(), futureAutoPosts.length);
+    const scheduleChanged = futureAutoPosts.some((post, index) => post.scheduledAt !== expectedSlots[index]);
+    if (scheduleChanged && expectedSlots.length === futureAutoPosts.length) {
+      futureAutoPosts.forEach((post, index) => Object.assign(post, {
+        scheduledAt: expectedSlots[index],
+        automationError: null,
+        automationNextAttemptAt: null,
+        revision: Number(post.revision || 1) + 1,
+        updatedAt: now(),
+      }));
+      store.save();
+    }
+    return { group, scheduled: [], rescheduled: scheduleChanged ? futureAutoPosts : [] };
+  }
   const hasFutureSlot = (store.state.socialPosts || []).some((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && Date.parse(post.scheduledAt) > Date.now());
   if (hasFutureSlot) return { group, scheduled: [] };
   const capacity = Math.max(0, dailyLimit - existingToday);

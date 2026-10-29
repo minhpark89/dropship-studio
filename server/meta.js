@@ -6,7 +6,7 @@ import { StudioError } from "./store.js";
 import { importMedia } from "./media.js";
 import { generateImageEndpoint, resolveMcImageConfig } from "./mc-image.js";
 import { requestJsonContent } from "./llm.js";
-import { normalizeScheduleConfig } from "./social.js";
+import { autoScheduleWarehousePosts, normalizeScheduleConfig } from "./social.js";
 
 const GRAPH_VERSION = "v26.0";
 const accessTokenSchema = z.string().trim().min(10).max(5000);
@@ -925,6 +925,12 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     Object.assign(group, { name, pageIds, folderBinding: String(body.folderBinding || body.folder_binding || group.folderBinding || ""), scheduleConfig: normalizeScheduleConfig(body.scheduleConfig || body.schedule_config || group.scheduleConfig || {}), updatedAt: now });
     for (const page of meta.pages) page.groupIds = meta.pageGroups.filter((item) => item.pageIds.includes(page.id)).map((item) => item.id);
     store.save();
+    try {
+      autoScheduleWarehousePosts(store, group.id);
+    } catch {
+      // The group remains saved; its next scheduler tick will surface any
+      // missing Page/token binding in the post status panel.
+    }
     res.json({ group: publicPageGroup(group) });
   });
 

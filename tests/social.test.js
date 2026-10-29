@@ -197,6 +197,12 @@ test("an enabled Page group materializes Meta Pages and schedules drafts without
   assert.equal(post.pageGroupId, group.id);
   assert.equal(post.status, "scheduled");
   assert.equal(autoScheduleWarehousePosts(store, group.id).scheduled.length, 0);
+  const originalSlot = post.scheduledAt;
+  const changed = new Date(Date.now() + 240_000);
+  group.scheduleConfig.times = [`${String(changed.getHours()).padStart(2, "0")}:${String(changed.getMinutes()).padStart(2, "0")}`];
+  const moved = autoScheduleWarehousePosts(store, group.id);
+  assert.equal(moved.rescheduled.length, 1);
+  assert.notEqual(post.scheduledAt, originalSlot);
 });
 
 test("an enabled Page group automatically takes warehouse drafts into its daily slots", async () => {
