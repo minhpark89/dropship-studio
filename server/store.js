@@ -47,6 +47,7 @@ export class Store extends EventEmitter {
         concurrency: 2,
         renderConcurrency: 1,
         renderThreads: 4,
+        dreamfaceConcurrency: 1,
         queuePaused: false,
         pollSeconds: 5,
         maxWaitMinutes: 30,
@@ -80,6 +81,11 @@ export class Store extends EventEmitter {
           model: "",
           autoDiscover: true,
           dreamfaceFallback: true,
+        },
+        captcha: {
+          enabled: true,
+          autoSolveDreamFace: true,
+          hasKey: false,
         },
         meta: {
           enabled: false,
@@ -133,6 +139,7 @@ export class Store extends EventEmitter {
       concurrency: 2,
       renderConcurrency: 1,
       renderThreads: 4,
+      dreamfaceConcurrency: 1,
       queuePaused: false,
       pollSeconds: 5,
       maxWaitMinutes: 30,
@@ -167,6 +174,11 @@ export class Store extends EventEmitter {
         autoDiscover: true,
         dreamfaceFallback: true,
       },
+      captcha: {
+        enabled: true,
+        autoSolveDreamFace: true,
+        hasKey: false,
+      },
       meta: {
         enabled: false,
         graphVersion: "v26.0",
@@ -196,6 +208,10 @@ export class Store extends EventEmitter {
     this.state.settings.imageGeneration = {
       ...defaults.imageGeneration,
       ...(this.state.settings.imageGeneration || {}),
+    };
+    this.state.settings.captcha = {
+      ...defaults.captcha,
+      ...(this.state.settings.captcha || {}),
     };
     this.state.settings.content = {
       ...defaults.content,

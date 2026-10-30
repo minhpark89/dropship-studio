@@ -34,6 +34,7 @@ export function AccountsPage({ data, run, notify }) {
   const [slotCount, setSlotCount] = useState(5);
   const [slotPrefix, setSlotPrefix] = useState("DreamFace profile");
   const [slotProxies, setSlotProxies] = useState("");
+  const [slotConcurrency, setSlotConcurrency] = useState(1);
   const [connectNewProfiles,setConnectNewProfiles]=useState(true);
   const [gmailPrefix, setGmailPrefix] = useState("DreamFace Gmail");
   const [gmailProxy, setGmailProxy] = useState("");
@@ -43,6 +44,9 @@ export function AccountsPage({ data, run, notify }) {
   const dreamfaceAccounts = data.accounts.filter((account) => account.provider === "dreamface");
   const dreamfaceReady = dreamfaceAccounts.filter((account) => account.status === "ready").length;
   const dreamfaceNeedsLogin = dreamfaceAccounts.filter((account) => account.status === "needs_login").length;
+  const captchaConfigured = Boolean(data.settings?.captcha?.hasKey) && data.settings?.captcha?.enabled !== false;
+  const dreamfaceVerification = dreamfaceAccounts.filter((account) =>
+    account.status === "verification" || account.gmailStatus === "verification").length;
   const sameProfile = (left, right) =>
     (left.profileId || left.id) === (right.profileId || right.id);
   const sharedProfile = (account) =>
@@ -81,6 +85,21 @@ export function AccountsPage({ data, run, notify }) {
     setBusy("");
     if (checked) notify(`Đã kiểm tra ${checked} profile DreamFace. Profile sẵn sàng sẽ tự được xoay vòng khi chọn Tự chọn.`);
   };
+  const solveCaptcha = async (account) => {
+    const result = await action(account.id, "captcha");
+    return result;
+  };
+  const solveAllCaptcha = async () => {
+    const targets = dreamfaceAccounts.filter((account) =>
+      account.status === "verification" || account.gmailStatus === "verification");
+    if (!targets.length || busy) return;
+    setBusy("captcha-all");
+    for (const account of targets) {
+      await run(() => api(`/accounts/${account.id}/captcha`, {}));
+    }
+    setBusy("");
+    notify(`Đã gửi CAPTCHA của ${targets.length} profile DreamFace tới 2Captcha.`);
+  };
   const createGmailAccount = async (event) => {
     event.preventDefault();
     setBusy("gmail-create");
@@ -93,9 +112,9 @@ export function AccountsPage({ data, run, notify }) {
     }));
     const account = created?.accounts?.[0];
     if (account) {
-      const result = await run(() => api(`/accounts/${account.id}/gmail-signup`, { action: "start" }));
+      const queued = await run(() => api("/accounts/bulk-login", { ids: [account.id] }));
       close();
-      if (result?.message) notify(result.email ? `Đã tạo email mẫu ${result.email}. ${result.message}` : result.message);
+      if (queued) notify(`Đã tạo email mẫu ${account.email}. App đăng nhập ẩn profile này trong nền; cửa sổ Chrome không mở ra.`);
     }
     setBusy("");
   };
@@ -127,16 +146,16 @@ export function AccountsPage({ data, run, notify }) {
       close();
       notify(`Đã tạo ${result.created} profile DreamFace${proxies.length ? " và gán proxy." : "."}`);
       if (connectNewProfiles) {
-        const connectionResults = [];
-        for (const account of result.accounts) {
-          // Each login opens the saved profile in its own visible browser window.
-          // Keep going when one profile needs CAPTCHA/OTP so every slot is prepared.
-          const connected = await action(account.id, "login");
-          connectionResults.push({ account, status: connected?.status || "failed" });
+        const queued = await run(() => api("/accounts/bulk-login", {
+          ids: result.accounts.map((account) => account.id),
+          concurrency: Number(slotConcurrency) || 1,
+        }));
+        if (queued) {
+          const hint = captchaConfigured
+            ? `App đăng nhập ẩn ${queued.concurrency || slotConcurrency} profile cùng lúc và tự giải CAPTCHA bằng 2Captcha.`
+            : "App đăng nhập ẩn trong nền; lưu API key 2Captcha để tự giải CAPTCHA.";
+          notify(`Đã xếp hàng ${queued.queued || result.created} profile. ${hint} Không mở cửa sổ Chrome nào.`);
         }
-        const ready = connectionResults.filter(({ status }) => status === "ready").length;
-        const manual = connectionResults.filter(({ status }) => status !== "ready").map(({ account }) => account.name);
-        notify(`Đã mở và tự nhập ${connectionResults.length} profile DreamFace (${ready} sẵn sàng).${manual.length ? ` Cần hoàn tất CAPTCHA/xác minh trong: ${manual.join(", ")}.` : ""}`);
       }
     }
     setBusy("");
@@ -149,7 +168,7 @@ export function AccountsPage({ data, run, notify }) {
           <h1>Tài khoản của bạn.</h1>
           <p>Quản lý các profile AI trên máy này, gồm DreamFace để render và xoay vòng theo ngày.</p>
         </div>
-        <div className="account-heading-actions"><Button onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setSlotProxies(""); setModal({ type: "bulk-slots" }); }}><Plus size={16} /> Tạo profile xoay vòng</Button><Button onClick={() => { setGmailPrefix("DreamFace Gmail"); setGmailProxy(""); setModal({ type: "gmail-create" }); }}><MailPlus size={16} /> Tạo Gmail & đăng nhập</Button><Button
+        <div className="account-heading-actions"><Button onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setSlotProxies(""); setSlotConcurrency(Number(data.settings?.dreamfaceConcurrency) || 1); setModal({ type: "bulk-slots" }); }}><Plus size={16} /> Tạo profile xoay vòng</Button><Button onClick={() => { setGmailPrefix("DreamFace Gmail"); setGmailProxy(""); setModal({ type: "gmail-create" }); }}><MailPlus size={16} /> Tạo Gmail & đăng nhập</Button><Button
           variant="primary"
           onClick={() => {
             setForm({
@@ -175,9 +194,11 @@ export function AccountsPage({ data, run, notify }) {
         <div className="dreamface-pool-stats">
           <span><strong>{dreamfaceReady}</strong> sẵn sàng</span>
           <span><strong>{dreamfaceNeedsLogin}</strong> cần đăng nhập</span>
+          {dreamfaceVerification > 0 && <span><strong>{dreamfaceVerification}</strong> chờ CAPTCHA</span>}
         </div>
         <div className="dreamface-pool-actions">
           <Button disabled={!dreamfaceAccounts.length || Boolean(busy)} busy={busy === "dreamface-all"} onClick={checkDreamfaceAll}><RefreshCw size={14} /> Kiểm tra tất cả</Button>
+          <Button disabled={!captchaConfigured || !dreamfaceVerification || Boolean(busy)} busy={busy === "captcha-all"} onClick={solveAllCaptcha}><ShieldCheck size={14} /> Giải CAPTCHA</Button>
           <Button onClick={() => { setGmailPrefix("DreamFace Gmail"); setGmailProxy(""); setModal({ type: "gmail-create" }); }}><MailPlus size={15} /> Tạo Gmail</Button>
           <Button variant="primary" onClick={() => { setSlotCount(5); setSlotPrefix("DreamFace profile"); setSlotProxies(""); setModal({ type: "bulk-slots" }); }}><Plus size={15} /> Tạo nhiều profile</Button>
         </div>
@@ -342,6 +363,14 @@ export function AccountsPage({ data, run, notify }) {
                 >
                   <MailPlus size={13} />
                    {account.gmailStatus === "ready" || account.gmailStatus === "created" ? "Mở DreamFace" : account.gmailStatus === "verification" || account.gmailStatus === "pending" || account.gmailStatus === "opening" ? "Kiểm tra DreamFace" : "Tạo Gmail & điền"}
+                </button>}
+                {account.provider === "dreamface" && (account.status === "verification" || account.gmailStatus === "verification") && <button
+                  className="text-button"
+                  disabled={Boolean(busy) || ["busy", "checking"].includes(account.status)}
+                  onClick={() => solveCaptcha(account)}
+                >
+                  <ShieldCheck size={13} />
+                  Giải CAPTCHA tự động
                 </button>}
                 <button
                   className="text-button"
@@ -542,7 +571,7 @@ export function AccountsPage({ data, run, notify }) {
         <Modal title="Tạo nhiều profile DreamFace" onClose={close}>
           <form onSubmit={createSlots}>
             <Notice>
-              Mỗi profile được tạo một email Gmail dạng mẫu riêng và mật khẩu ngẫu nhiên, lưu cục bộ trong kho mã hóa. Bấm <strong>Tạo Gmail & điền</strong> để mở DreamFace và tự điền thông tin. App không tạo hộp thư Google thật; nếu DreamFace hiện CAPTCHA, hãy giải trực tiếp trong cửa sổ Chrome.
+              Mỗi profile được tạo một email Gmail dạng mẫu riêng và mật khẩu ngẫu nhiên, lưu cục bộ trong kho mã hóa. Khi bật <strong>Đăng nhập ẩn ngay</strong>, app đăng nhập trong nền, tự giải reCAPTCHA bằng 2Captcha, chờ profile sẵn sàng rồi đóng và chuyển sang profile kế tiếp. Không mở cửa sổ Chrome nào, kể cả khi DreamFace cần xác minh. App không tạo hộp thư Google thật.
             </Notice>
             <div className="form-grid">
               <Field label="Số profile muốn tạo"><input type="number" min="1" max="100" value={slotCount} onChange={(event) => setSlotCount(event.target.value)} /></Field>
@@ -551,11 +580,16 @@ export function AccountsPage({ data, run, notify }) {
             <Field label="Proxy cho profile (tùy chọn)" hint="Một dòng dùng chung cho tất cả profile; nhiều dòng phải đúng bằng số profile. Hỗ trợ host:port, host:port:user:pass hoặc user:pass@host:port.">
               <textarea rows="3" value={slotProxies} onChange={(event) => setSlotProxies(event.target.value)} placeholder={"http://127.0.0.1:8080\nhttp://127.0.0.1:8081"} />
             </Field>
-            <label className="check-field"><input type="checkbox" aria-label="Start registration now" checked={connectNewProfiles} onChange={event=>setConnectNewProfiles(event.target.checked)}/> Mở kết nối DreamFace ngay</label>
+            <label className="check-field"><input type="checkbox" aria-label="Đăng nhập ẩn ngay, không mở cửa sổ" checked={connectNewProfiles} onChange={event=>setConnectNewProfiles(event.target.checked)}/> Đăng nhập ẩn ngay (không mở cửa sổ)</label>
+            {connectNewProfiles && (
+              <Field label="Số luồng Chrome chạy cùng lúc" hint="1 = lần lượt từng profile. Tăng lên để nhanh hơn nhưng tốn thêm RAM/CPU; Chrome vẫn chạy ẩn.">
+                <input type="number" min="1" max="4" value={slotConcurrency} onChange={(event) => setSlotConcurrency(event.target.value)} />
+              </Field>
+            )}
             <Field label="Chọn profile khi render" hint="Tự chọn sẽ ưu tiên profile đã kết nối và chưa dùng trong ngày. Proxy được gắn cố định theo từng profile.">
               <input value="Xoay vòng theo ngày · profile sẵn sàng" readOnly />
             </Field>
-            <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" aria-label={`Create ${slotCount} profiles`} busy={busy === "bulk-slots"}><Plus size={15} /> Tạo {slotCount} profile</Button></div>
+            <div className="modal-actions"><Button type="button" onClick={close}>Hủy</Button><Button variant="primary" aria-label={`Tạo ${slotCount} profile`} busy={busy === "bulk-slots"}><Plus size={15} /> Tạo {slotCount} profile</Button></div>
           </form>
         </Modal>
       )}
@@ -563,7 +597,7 @@ export function AccountsPage({ data, run, notify }) {
         <Modal title="Tạo Gmail mẫu & đăng nhập DreamFace" onClose={close}>
           <form onSubmit={createGmailAccount}>
             <Notice>
-              App sẽ tạo một email Gmail dạng mẫu không trùng các profile cũ, lưu mật khẩu ngẫu nhiên an toàn rồi mở DreamFace để tự điền và gửi đăng nhập/đăng ký. App không tạo Gmail thật. Nếu DreamFace yêu cầu CAPTCHA, cửa sổ Chrome sẽ giữ nguyên để bạn giải; sau đó bấm “Kiểm tra DreamFace”.
+              App sẽ tạo một email Gmail dạng mẫu không trùng các profile cũ, lưu mật khẩu ngẫu nhiên an toàn rồi mở DreamFace để tự điền và gửi đăng nhập/đăng ký. App không tạo Gmail thật. Nếu đã lưu API key 2Captcha, reCAPTCHA được giải tự động qua API; nếu không, cửa sổ Chrome sẽ giữ nguyên để bạn giải rồi bấm “Kiểm tra DreamFace”.
             </Notice>
             <Field label="Tên profile">
               <input autoFocus maxLength="80" value={gmailPrefix} onChange={(event) => setGmailPrefix(event.target.value)} placeholder="DreamFace Gmail" />

@@ -7,6 +7,15 @@ import { importMedia, probe, binary, runProcess } from "../media.js";
 import { StudioError } from "../store.js";
 import { ensureNewsMcImage } from "../mc-image.js";
 import { getDreamFaceProxy, parseProxy } from "../dreamface-accounts.js";
+import {
+  CAPTCHA_BROWSER_HOOK,
+  applyCaptchaToken,
+  buildCaptchaTask,
+  captchaTimeoutMs,
+  createCaptchaClient,
+  detectCaptcha,
+  readCaptchaSettings,
+} from "../captcha.js";
 
 export const DREAMFACE_PROVIDER = "dreamface";
 export const DREAMFACE_URL = providers.dreamface.url;
@@ -193,43 +202,73 @@ async function clickGoogleNext(page) {
 }
 
 async function dismissDreamFacePromos(page) {
-  const dismiss=page.getByText("Close",{exact:true}).first();
-  if(await dismiss.isVisible().catch(()=>false))await dismiss.click().catch(()=>{});
-  const dialogs = page.locator('[role="dialog"]:visible');
-  const count = await dialogs.count().catch(() => 0);
-  for (let index = 0; index < count; index += 1) {
-    const dialog = dialogs.nth(index);
-    if (await dialog.locator('input[type="email"]:visible, input[type="password"]:visible').count()) continue;
-    const close = await firstVisible([
-      dialog.getByRole("button", { name: /^Close$/i }),
-      dialog.locator('button[aria-label="Close"]'),
-    ]);
-    if (close) await close.click().catch(() => {});
+  // DreamFace shows full-screen promo layers over the header. They absorb the
+  // first login click, so close every promo layer before interacting.
+  for (let round = 0; round < 4; round += 1) {
+    let closed = false;
+    const dialogs = page.locator('[role="dialog"]:visible');
+    const count = await dialogs.count().catch(() => 0);
+    for (let index = 0; index < count; index += 1) {
+      const dialog = dialogs.nth(index);
+      if (await dialog.locator('input[type="email"]:visible, input[type="password"]:visible').count()) continue;
+      const close = await firstVisible([
+        dialog.locator("button.ant-modal-close"),
+        dialog.getByRole("button", { name: /^Close$/i }),
+        dialog.locator('button[aria-label="Close"], button[aria-label="close"]'),
+      ]);
+      if (close) {
+        await close.click({ force: true }).catch(() => {});
+        closed = true;
+      }
+    }
+    if (!closed) break;
+    await page.waitForTimeout(180);
   }
+}
+
+async function loginFieldsVisible(email, password) {
+  return (await email.isVisible().catch(() => false)) &&
+    (await password.isVisible().catch(() => false));
 }
 
 async function openDreamFaceLogin(page) {
-  await page.getByText(/^Log\s*in\s*\/\s*Sign\s*up$/i).first().waitFor({state:"visible",timeout:15000}).catch(()=>{});
-  await dismissDreamFacePromos(page);
   const email = page.locator('input[type="email"]:visible').first();
   const password = page.locator('input[type="password"]:visible').first();
-  if (await email.isVisible().catch(() => false) && await password.isVisible().catch(() => false)) {
-    return { email, password };
+  // Try the short path first: a returning profile may already show the form.
+  if (await loginFieldsVisible(email, password)) return { email, password };
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await dismissDreamFacePromos(page);
+    if (await loginFieldsVisible(email, password)) break;
+    const login = await firstVisible([
+      page.locator("a.login"),
+      page.getByText(/^Log\s*in\s*\/\s*Sign\s*up$/i),
+      page.getByText(/^Log\s*In\s*\/\s*Sign\s*Up$/i),
+      page.getByRole("button", { name: /log\s*in.*sign\s*up/i }),
+    ]);
+    if (login) await login.click({ force: true }).catch(() => {});
+    // A click may open another promo instead of the form; loop closes it and
+    // clicks again. Never block for the old 20-second form wait.
+    await Promise.race([
+      email.waitFor({ state: "visible", timeout: 2500 }).catch(() => {}),
+      page.locator('[role="dialog"]:visible').first()
+        .waitFor({ state: "visible", timeout: 2500 }).catch(() => {}),
+    ]);
+    if (!(await loginFieldsVisible(email, password))) await page.waitForTimeout(250);
   }
-  const login = await firstVisible([
-    page.getByText(/^Log\s*in\s*\/\s*Sign\s*up$/i),
-    page.getByText(/^Log\s*In\s*\/\s*Sign\s*Up$/i),
-    page.getByRole("button", { name: /log\s*in.*sign\s*up/i }),
-  ]);
-  if (login) await login.click().catch(() => {});
-  await email.waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
-  await password.waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
-  if (!(await email.isVisible().catch(() => false)) || !(await password.isVisible().catch(() => false))) return null;
-  return { email, password };
+  return (await loginFieldsVisible(email, password)) ? { email, password } : null;
 }
 
-async function dreamFaceComposer(page) {
+async function findLoginSubmit(page) {
   return firstVisible([
+    pageDialog(page).getByRole("button", { name: /^Log\s*in$/i }),
+    pageDialog(page).getByRole("button", { name: /^(?:Sign\s*up|Create\s*account|Register|Continue|Next)$/i }),
+    page.getByRole("button", { name: /^Log\s*in$/i }),
+    page.getByRole("button", { name: /^(?:Sign\s*up|Create\s*account|Register|Continue|Next)$/i }),
+    page.locator('button[type="submit"]:visible'),
+    page.locator('input[type="submit"]:visible'),
+  ]);
+}
+async function dreamFaceComposer(page) {  return firstVisible([
     page.locator('[contenteditable="true"][role="textbox"]'),
     page.locator('[contenteditable="true"]'),
     page.locator('textarea[placeholder="Type or paste text here"]:visible'),
@@ -535,6 +574,9 @@ export class DreamFaceProvider {
       });
       const page = context.pages()[0] || await context.newPage();
       page.setDefaultTimeout(12000);
+      // Remember Turnstile/hCaptcha callbacks on every navigation so a solved
+      // token can be handed back to the page without clicking the widget.
+      await page.addInitScript(CAPTCHA_BROWSER_HOOK).catch(() => {});
       const session = { context, browser: context.browser?.(), page, visible, profileId: id };
       this.sessions.set(id, session);
       return session;
@@ -647,12 +689,97 @@ export class DreamFaceProvider {
     }
   }
 
-  async login(account, input = {}) {
+  captchaSettings() {
+    return readCaptchaSettings(this.store);
+  }
+
+  /**
+   * Solve the captcha currently shown on DreamFace with the user's own
+   * 2Captcha key, then hand the token back to the page. Returns a result
+   * instead of throwing so the manual flow can always continue.
+   */
+  async autoSolveCaptcha(page, { onProgress } = {}) {
+    const settings = this.captchaSettings();
+    if (!settings.enabled) return { solved: false, reason: "disabled" };
+    if (!settings.autoSolveDreamFace) return { solved: false, reason: "disabled-for-dreamface" };
+    if (!settings.apiKey) return { solved: false, reason: "missing-key" };
+    const detected = await detectCaptcha(page);
+    if (!detected) return { solved: false, reason: "not-detected" };
+    if (!detected.sitekey) return { solved: false, reason: "missing-sitekey", type: detected.type };
+    let task;
+    try {
+      task = buildCaptchaTask({
+        type: detected.type,
+        pageUrl: detected.pageUrl || page.url() || DREAMFACE_URL,
+        sitekey: detected.sitekey,
+        action: detected.action,
+        invisible: detected.invisible,
+        enterprise: false,
+      });
+    } catch (error) {
+      return { solved: false, reason: "invalid-task", type: detected.type, message: error.message };
+    }
+    const client = createCaptchaClient({
+      apiKey: settings.apiKey,
+      timeoutMs: captchaTimeoutMs(settings.timeoutSeconds),
+      onProgress,
+    });
+    try {
+      const solution = await client.solve(task);
+      const applied = await applyCaptchaToken(page, { type: detected.type, token: solution.token });
+      return { solved: true, type: detected.type, applied, cost: solution.cost };
+    } catch (error) {
+      return {
+        solved: false,
+        reason: "error",
+        type: detected.type,
+        message: error.message,
+        code: error.code,
+      };
+    }
+  }
+
+  async solveAccountCaptcha(account) {
+    const session = await this.open(account, { visible: true });
+    const page = session.page;
+    if (page.url() === "about:blank")
+      await page.goto(DREAMFACE_URL, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+    await openDreamFaceLogin(page);
+    const settings = this.captchaSettings();
+    if (!settings.enabled || !settings.apiKey) {
+      const state = await this.inspect(account, session);
+      return {
+        ...state,
+        message: "Chưa lưu API key 2Captcha. Vào Settings → CAPTCHA để bật tự động giải, hoặc giải thủ công trong cửa sổ Chrome.",
+      };
+    }
+    const attempt = await this.autoSolveCaptcha(page);
+    if (!attempt.solved) {
+      const state = await this.inspect(account, session);
+      const reason = attempt.reason === "not-detected"
+        ? "Không thấy CAPTCHA đang hiển thị trên trang DreamFace."
+        : attempt.message || "Không giải được CAPTCHA.";
+      return { ...state, message: `${reason} Kiểm tra cửa sổ Chrome rồi thử lại.` };
+    }
+    await page.waitForTimeout(1200);
+    const submit = await findLoginSubmit(page);
+    if (submit) await submit.click().catch(() => {});
+    await page.waitForTimeout(4000);
+    const state = await this.inspect(account, session);
+    return {
+      ...state,
+      message: state.status === "ready"
+        ? "Đã giải CAPTCHA bằng 2Captcha và đăng nhập DreamFace thành công."
+        : `Đã giải CAPTCHA bằng 2Captcha và gửi đăng nhập. ${state.message}`,
+    };
+  }
+
+  async login(account, input = {}, { visible = true } = {}) {
     const cookies = input.cookies ? parseDreamFaceCookies(input.cookies) : null;
     const hasCredentials = Boolean(input.email && input.password);
     if (!cookies && !hasCredentials) throw providerError("Enter DreamFace email and password, or create a profile with saved sign-in details.", "CREDENTIALS_REQUIRED");
     if (input.email && !/^\S+@\S+\.\S+$/.test(input.email)) throw providerError("Email DreamFace không hợp lệ.", "INVALID_CREDENTIALS");
-    const session = await this.open(account, { visible: true });
+    const session = await this.open(account, { visible });
     if (cookies) {
       await session.context.addCookies(cookies);
       return this.inspect(account, session, { navigate: true });
@@ -665,22 +792,35 @@ export class DreamFaceProvider {
     const { email: emailField, password: passwordField } = fields;
     await emailField.fill(input.email);
     await passwordField.fill(input.password);
-    const submit = await firstVisible([
-      pageDialog(session.page).getByRole("button", { name: /^(?:Sign\s*up|Create\s*account|Register|Continue|Next)$/i }),
-      pageDialog(session.page).getByRole("button", { name: /^Log\s*in$/i }),
-      session.page.getByRole("button", { name: /^(?:Sign\s*up|Create\s*account|Register|Continue|Next)$/i }),
-      session.page.getByRole("button", { name: /^Log\s*in$/i }),
-      session.page.locator('button[type="submit"]:visible'),
-      session.page.locator('input[type="submit"]:visible'),
-    ]);
+    // DreamFace renders a reCAPTCHA v2 widget inside the login dialog. When the
+    // user saved a 2Captcha key we solve it and inject the token before the
+    // click; otherwise the widget stays for the user to solve manually.
+    const preCaptcha = await this.autoSolveCaptcha(session.page);
+    const submit = await findLoginSubmit(session.page);
     if (submit) await submit.click().catch(() => passwordField.press("Enter"));
     else await passwordField.press("Enter");
     await Promise.race([
-      passwordField.waitFor({state:"hidden",timeout:12000}),
-      session.page.locator('iframe[src*="captcha"]:visible').first().waitFor({state:"visible",timeout:12000}),
+      passwordField.waitFor({state:"hidden",timeout:8000}),
+      session.page.locator('iframe[src*="captcha"]:visible').first().waitFor({state:"visible",timeout:8000}),
+      session.page.locator('[contenteditable="true"], textarea:visible').first().waitFor({state:"visible",timeout:8000}),
     ]).catch(()=>{});
+    // Some widgets only appear (or are enforced) after the first submit.
+    let postCaptcha = { solved: false };
+    if (!preCaptcha.solved) {
+      postCaptcha = await this.autoSolveCaptcha(session.page);
+      if (postCaptcha.solved) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const retrySubmit = await findLoginSubmit(session.page);
+        if (retrySubmit) await retrySubmit.click().catch(() => {});
+        await Promise.race([
+          passwordField.waitFor({state:"hidden",timeout:6000}),
+          new Promise((resolve) => setTimeout(resolve, 5000)),
+        ]).catch(()=>{});
+      }
+    }
     const result=await this.inspect(account,session);
-    return {...result,message:result.status==="ready"?"DreamFace is connected. This saved profile can render videos.":result.status==="verification"?"DreamFace needs CAPTCHA verification. Complete it in the open window, then click Check session.":"Sign-in details are saved. Complete registration in the DreamFace window, then click Check session."};
+    const solvedNote = preCaptcha.solved || postCaptcha.solved ? " CAPTCHA đã được giải tự động qua 2Captcha." : "";
+    return {...result,message:(result.status==="ready"?"DreamFace is connected. This saved profile can render videos.":result.status==="verification"?`DreamFace needs CAPTCHA verification. Complete it in the open window, then click Check session.${preCaptcha.reason==="missing-key"?" Add a 2Captcha API key in Settings to automate it.":""}`:"Sign-in details are saved. Complete registration in the DreamFace window, then click Check session.")+solvedNote};
   }
 
   async startDreamFaceSignup(account, credentials) {
@@ -691,7 +831,9 @@ export class DreamFaceProvider {
       return {
         ...result,
         authStep: "captcha",
-        message: "DreamFace requires CAPTCHA verification. Solve it in the open Chrome window, then click Check session.",
+        message: /2Captcha/i.test(result.message || "")
+          ? result.message
+          : "DreamFace requires CAPTCHA verification. Solve it in the open Chrome window, then click Check session.",
       };
     }
     if (result.status === "ready") return result;

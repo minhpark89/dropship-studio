@@ -22,6 +22,7 @@ import { mountSocialRoutes } from "./social.js";
 import { mountResearchRoutes } from "./research.js";
 import { mountMetaRoutes } from "./meta.js";
 import { createDreamFaceProvider } from "./providers/dreamface.js";
+import { DreamFaceSetupQueue } from "./dreamface-setup.js";
 import { createDreamFaceSlots, ensureDreamFaceCredentials, parseProxy, proxySecretId, saveDreamFaceProxy, saveDreamFaceCredentials } from "./dreamface-accounts.js";
 import { SecretStore } from "./secret-store.js";
 import { mountProductionRoutes } from "./production.js";
@@ -29,6 +30,12 @@ import { mountContentRoutes } from "./content.js";
 import { mountWebsiteRoutes } from "./website.js";
 import { inspectMcImageSettings } from "./mc-image.js";
 import { SocialScheduler } from "./social-scheduler.js";
+import {
+  createCaptchaClient,
+  publicCaptchaSettings,
+  readCaptchaSettings,
+  saveCaptchaSettings,
+} from "./captcha.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
@@ -50,8 +57,11 @@ export async function startServer({
 
 async function createServer({ port, dataDir, host, desktop, instance }) {
   const store = new Store(dataDir);
+  // Mirror only the public flags; the API key itself lives in SecretStore.
+  store.state.settings.captcha = publicCaptchaSettings(store);
   const browsers = new BrowserProfiles(store);
   const dreamface = createDreamFaceProvider({ store });
+  const dreamfaceSetup = new DreamFaceSetupQueue({ store, dreamface });
   const queue = new JobQueue(store, browsers, {
     generateDreamFace: (currentStore, job, account, signal, update) =>
       job.payload.workflow === "avatar-news"
@@ -146,6 +156,33 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
   });
   app.get("/api/settings/mc-image", async (req, res) => {
     res.json(await inspectMcImageSettings(store));
+  });
+  app.get("/api/captcha", (req, res) => {
+    res.json({ ...publicCaptchaSettings(store), balance: store.state.settings.captcha?.balance ?? null });
+  });
+  app.patch("/api/captcha", (req, res) => {
+    const input = z.object({
+      enabled: z.boolean().optional(),
+      autoSolveDreamFace: z.boolean().optional(),
+      apiKey: z.string().max(200).optional(),
+      clearKey: z.boolean().optional(),
+    }).parse(req.body || {});
+    const saved = saveCaptchaSettings(store, input);
+    store.state.settings.captcha = saved;
+    store.save();
+    res.json(saved);
+  });
+  app.post("/api/captcha/balance", async (req, res) => {
+    const settings = readCaptchaSettings(store);
+    if (!settings.apiKey) throw new StudioError("Chưa lưu API key 2Captcha.", "CAPTCHA_KEY_MISSING", 400);
+    const result = await createCaptchaClient({ apiKey: settings.apiKey }).balance();
+    store.state.settings.captcha = {
+      ...publicCaptchaSettings(store),
+      balance: result.balance,
+      checkedAt: new Date().toISOString(),
+    };
+    store.save();
+    res.json(store.state.settings.captcha);
   });
 
   const websiteService = mountWebsiteRoutes(app, store);
@@ -387,6 +424,21 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     const accounts = createDreamFaceSlots(store,input);
     res.status(201).json({ accounts, created: accounts.length });
   });
+  app.post("/api/accounts/bulk-login", (req, res) => {
+    const input = z.object({
+      ids: z.array(z.string().uuid()).max(100).default([]),
+      concurrency: z.number().int().min(1).max(4).optional(),
+    }).parse(req.body || {});
+    const accounts = input.ids.length
+      ? input.ids.map((id) => store.require("accounts", id))
+      : store.state.accounts.filter((account) =>
+        account.provider === "dreamface" &&
+        !["ready", "busy", "checking"].includes(account.status));
+    res.status(202).json(dreamfaceSetup.enqueue(accounts, { concurrency: input.concurrency }));
+  });
+  app.get("/api/accounts/setup-status", (req, res) => {
+    res.json(dreamfaceSetup.status());
+  });
   app.patch("/api/accounts/:id", async (req, res) => {
     const account = store.require("accounts", req.params.id);
     const input = z.object({ proxy: z.string().trim().max(500).default("") }).parse(req.body || {});
@@ -461,6 +513,35 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
   app.post("/api/accounts/:id/check", async (req, res) =>
     res.json(await checkAccount(req.params.id)),
   );
+  app.post("/api/accounts/:id/captcha", async (req, res) => {
+    const account = store.require("accounts", req.params.id);
+    if (account.provider !== "dreamface")
+      throw new StudioError("Giải CAPTCHA bằng 2Captcha chỉ dành cho profile DreamFace.", "CAPTCHA_DREAMFACE_ONLY", 409);
+    if (["busy", "checking"].includes(account.status))
+      throw new StudioError("Profile đang được sử dụng. Chờ tác vụ hiện tại kết thúc.", "PROFILE_BUSY", 409);
+    store.patch("accounts", account.id, {
+      gmailAuthStep: "captcha",
+      message: "Đang giải CAPTCHA DreamFace bằng 2Captcha...",
+    });
+    try {
+      const result = await dreamface.solveAccountCaptcha(account);
+      const updated = store.patch("accounts", account.id, {
+        status: ["ready", "verification", "needs_login"].includes(result.status) ? result.status : account.status,
+        gmailStatus: result.status,
+        gmailAuthStep: result.authStep || "captcha",
+        gmailCheckedAt: new Date().toISOString(),
+        message: result.message,
+      });
+      res.json({ ...result, account: updated });
+    } catch (error) {
+      store.patch("accounts", account.id, {
+        gmailStatus: "verification",
+        gmailAuthStep: "captcha",
+        message: error.message,
+      });
+      throw error;
+    }
+  });
   app.post("/api/accounts/:id/login", async (req, res) => {
     const credentials = z
       .object({
@@ -558,6 +639,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
         concurrency: z.number().int().min(1).max(5).optional(),
         renderConcurrency: z.number().int().min(1).max(4).optional(),
         renderThreads: z.number().int().min(1).max(32).optional(),
+        dreamfaceConcurrency: z.number().int().min(1).max(4).optional(),
         queuePaused: z.boolean().optional(),
         pollSeconds: z.number().int().min(3).max(60).optional(),
         maxWaitMinutes: z.number().int().min(2).max(120).optional(),
@@ -657,6 +739,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       await socialScheduler.close();
       await production.close();
       await queue.close();
+      dreamfaceSetup.stop();
       await browsers.closeAll();
       await Promise.allSettled(
         store.state.accounts

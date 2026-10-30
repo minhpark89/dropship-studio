@@ -460,6 +460,37 @@ export function SettingsPage({ data, project, run, notify }) {
   const [llmTestBusy, setLlmTestBusy] = useState(false);
   const [mcImage, setMcImage] = useState(null);
   const [mcImageBusy, setMcImageBusy] = useState(false);
+  const [captchaKey, setCaptchaKey] = useState("");
+  const [captchaBusy, setCaptchaBusy] = useState(false);
+  const captcha = settings.captcha || { enabled: true, autoSolveDreamFace: true, hasKey: false };
+  const updateCaptcha = (patch) => setSettings((current) => ({
+    ...current,
+    captcha: { ...(current.captcha || {}), ...patch },
+  }));
+  const saveCaptcha = async (event) => {
+    event.preventDefault();
+    setCaptchaBusy(true);
+    const payload = {
+      enabled: captcha.enabled !== false,
+      autoSolveDreamFace: captcha.autoSolveDreamFace !== false,
+    };
+    if (captchaKey.trim()) payload.apiKey = captchaKey.trim();
+    const result = await run(() => api("/captcha", payload, "PATCH"), "Đã lưu cấu hình CAPTCHA solver.");
+    if (result) {
+      setSettings((current) => ({ ...current, captcha: { ...result, balance: current.captcha?.balance ?? null } }));
+      setCaptchaKey("");
+    }
+    setCaptchaBusy(false);
+  };
+  const testCaptchaBalance = async () => {
+    setCaptchaBusy(true);
+    const result = await run(() => api("/captcha/balance", {}));
+    if (result) {
+      setSettings((current) => ({ ...current, captcha: { ...result } }));
+      notify(`2Captcha còn ${Number(result.balance).toFixed(2)} USD.`);
+    }
+    setCaptchaBusy(false);
+  };
   const check = async () => {
     setBusy(true);
     const [nextHealth, nextLicense, nextMcImage] = await Promise.all([
@@ -743,6 +774,23 @@ export function SettingsPage({ data, project, run, notify }) {
                   }
                 />
               </Field>
+              <Field
+                label="Chrome ẩn song song (profile)"
+                hint="Số profile đăng nhập cùng lúc bằng Chrome ẩn. Cửa sổ không hiện ra; cao hơn nhanh hơn nhưng tốn RAM/CPU."
+              >
+                <input
+                  type="number"
+                  min="1"
+                  max="4"
+                  value={settings.dreamfaceConcurrency || 1}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      dreamfaceConcurrency: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
             </div>
             <Field label="Chờ tạo AI tối đa (phút)">
               <input
@@ -913,6 +961,54 @@ export function SettingsPage({ data, project, run, notify }) {
           </form>
         </section>
         <WebsiteSettings settings={data.settings?.website} notify={notify} />
+        <section className="panel settings-captcha-panel">
+          <div className="panel-heading">
+            <h3><KeyRound size={18} /> CAPTCHA solver · 2Captcha</h3>
+            <Badge status={captcha.hasKey && captcha.enabled !== false ? "ready" : "idle"} />
+          </div>
+          <p className="muted small">
+            Khi tạo profile DreamFace, app tự tạo email/mật khẩu, tự điền và tự giải reCAPTCHA bằng API 2Captcha của bạn. Key được mã hoá trên máy này và chỉ gửi tới api.2captcha.com.
+          </p>
+          <form onSubmit={saveCaptcha}>
+            <label className="toggle-field">
+              <input type="checkbox" checked={captcha.enabled !== false} onChange={(event) => updateCaptcha({ enabled: event.target.checked })} />
+              <span><strong>Tự động giải CAPTCHA</strong><small>Tắt để tự giải thủ công khi bấm Đăng nhập hoặc Mở trình duyệt tài khoản.</small></span>
+            </label>
+            <label className="toggle-field">
+              <input type="checkbox" checked={captcha.autoSolveDreamFace !== false} onChange={(event) => updateCaptcha({ autoSolveDreamFace: event.target.checked })} />
+              <span><strong>Áp dụng cho DreamFace</strong><small>Tự giải reCAPTCHA v2 khi đăng nhập hoặc tạo profile DreamFace.</small></span>
+            </label>
+            <Field label="2Captcha API key" hint={captcha.hasKey ? "Key đã lưu. Bỏ trống để giữ key hiện tại." : "Lấy key tại 2captcha.com → Dashboard. Key thường dài 32 ký tự."}>
+              <input
+                type="password"
+                autoComplete="off"
+                value={captchaKey}
+                placeholder={captcha.hasKey ? "•••••••• · đã lưu" : "32 ký tự"}
+                onChange={(event) => setCaptchaKey(event.target.value)}
+              />
+            </Field>
+            <div className="settings-llm-footer">
+              <span className="small muted">
+                {captcha.balance != null
+                  ? `Số dư 2Captcha: ${Number(captcha.balance).toFixed(2)} USD`
+                  : captcha.hasKey ? "Bấm Kiểm tra số dư để xác nhận key." : "Chưa lưu API key."}
+              </span>
+              <div className="settings-llm-test-area">
+                <Button type="button" onClick={testCaptchaBalance} busy={captchaBusy} disabled={!captcha.hasKey && !captchaKey.trim()}>
+                  <Activity size={15} />
+                  Kiểm tra số dư
+                </Button>
+                <Button variant="primary" type="submit" busy={captchaBusy}>
+                  <Save size={15} />
+                  Lưu CAPTCHA
+                </Button>
+              </div>
+            </div>
+            <Notice>
+              Khi tạo profile, app chạy Chrome ẩn, tự giải CAPTCHA và chờ profile sẵn sàng rồi mới sang profile kế tiếp; không mở cửa sổ nào. Nếu 2Captcha lỗi hoặc hết số dư, profile được đóng và đánh dấu cần đăng nhập để bạn bấm Giải CAPTCHA hoặc Đăng nhập thử lại.
+            </Notice>
+          </form>
+        </section>
         <section className="panel settings-mc-image-panel">
           <div className="panel-heading">
             <h3><ImageIcon size={18} /> AI MC for News</h3>
