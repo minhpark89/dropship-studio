@@ -1,4 +1,6 @@
 import { autoScheduleWarehousePosts } from "./social.js";
+import { automaticPostRetry } from "./meta-errors.js";
+import { publishedVideo, returnPostToWarehouse } from './post-lifecycle.js';
 
 export class SocialScheduler {
   constructor(store, publishReel, { intervalMs = 15_000, now = Date.now } = {}) {
@@ -16,14 +18,23 @@ export class SocialScheduler {
   duePosts() {
     const current = this.now();
     return (this.store.state.socialPosts || []).filter((post) => {
-      if (post.status !== "scheduled" || !post.scheduledAt || this.running.has(post.id)) return false;
+      if (post.status !== "scheduled" || !post.scheduledAt || this.running.has(post.id) || post.automationRetryBlocked || post.deletedAt || post.archivedAt) return false;
+      // Upgrade old queued errors without sending another request to Meta.
+      if (post.automationError) {
+        const error = { message: post.automationError, metaError: post.automationErrorDetails };
+        const decision = automaticPostRetry(error, Number(post.automationAttempts || 0), current);
+        if (decision.blocked) {
+          this.recordFailure(post, error, false);
+          return false;
+        }
+      }
       if (post.automationNextAttemptAt && Date.parse(post.automationNextAttemptAt) > current) return false;
       return Date.parse(post.scheduledAt) <= current;
     });
   }
 
   process(post) {
-    if (this.closed || this.running.has(post.id)) return null;
+    if (this.closed || this.running.has(post.id) || post.automationRetryBlocked || post.deletedAt || post.archivedAt) return null;
     this.running.add(post.id);
     const task = this.processPost(post);
     this.pending.add(task);
@@ -42,32 +53,33 @@ export class SocialScheduler {
       const current = this.store.state.socialPosts.find((item) => item.id === post.id);
       if (!current) return;
       if (result?.status === "published_comment_error") {
-        const attempts = Number(current.automationAttempts || 0) + 1;
-        Object.assign(current, {
-          automationStatus: "meta_error",
-          automationError: result.firstCommentError || "First comment failed.",
-          automationAttempts: attempts,
-          automationNextAttemptAt: new Date(this.now() + Math.min(15 * 60_000, 30_000 * attempts)).toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-        this.store.save();
+        this.recordFailure(current, { message: result.firstCommentError || "First comment failed.", metaError: result.firstCommentErrorDetails }, true, false);
       }
     } catch (error) {
       const current = this.store.state.socialPosts.find((item) => item.id === post.id);
       if (current) {
-        const attempts = Number(current.automationAttempts || 0) + 1;
-        Object.assign(current, {
-          automationStatus: "meta_error",
-          automationError: String(error?.message || error),
-          automationAttempts: attempts,
-          automationNextAttemptAt: new Date(this.now() + Math.min(30 * 60_000, 30_000 * attempts)).toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-        this.store.save();
+        this.recordFailure(current, error);
       }
     } finally {
       this.running.delete(post.id);
     }
+  }
+
+  recordFailure(post, error, increment = true, allowWarehouseReturn = true) {
+    const attempts = Number(post.automationAttempts || 0) + (increment ? 1 : 0);
+    const decision = automaticPostRetry(error, attempts, this.now());
+    Object.assign(post, {
+      automationStatus: "meta_error",
+      automationError: String(error?.message || error),
+      automationErrorDetails: decision.details,
+      automationAttempts: attempts,
+      automationRetryBlocked: decision.blocked,
+      automationBlockedReason: decision.reason,
+      automationNextAttemptAt: decision.nextAttemptAt,
+      updatedAt: new Date(this.now()).toISOString(),
+    });
+    if (decision.blocked && allowWarehouseReturn && !publishedVideo(this.store, post)) returnPostToWarehouse(this.store, post, { automatic:true, at:new Date(this.now()).toISOString() });
+    this.store.save();
   }
 
   async tick() {

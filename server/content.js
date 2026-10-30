@@ -210,6 +210,7 @@ export async function createContentFromMedia(store, mediaId, { pageId = "", sour
   if (media.kind !== "video" || !media.generated) throw new StudioError("Choose a completed video from Library.", "VIDEO_REQUIRED", 422);
   const existing = store.state.socialPosts.find(post => post.mediaIds?.includes(media.id));
   if (existing && !force) return existing;
+  if(!existing && media.metaPublishedAt)throw new StudioError("Video đã đăng; không tự tạo lại bài trong kho.","MEDIA_ALREADY_PUBLISHED",409);
   const contentType = requestedContentType || mediaContentType(media);
   const researchId = requestedResearchId || inferResearchId(store, media);
   let fields;

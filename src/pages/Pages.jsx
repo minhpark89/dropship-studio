@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CalendarClock, Check, ClipboardList, Filter, FolderPlus, Info, KeyRound, Link2, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, UsersRound, WandSparkles } from "lucide-react";
+import { PageManager, PostManager } from "./Management.jsx";
 import { api } from "../api.js";
 import { Badge, Button, Empty, Field, Modal, Notice } from "../components.jsx";
 
@@ -44,6 +45,7 @@ function postState(post) {
       : { key: "published", label: "Đã đăng Meta" };
   }
   if (post?.automationStatus === "publishing") return { key: "publishing", label: "Đang đăng Meta" };
+  if (post?.automationRetryBlocked) return { key: "error", label: "Đã dừng tự thử" };
   if (post?.automationStatus === "meta_error") return { key: "error", label: "Lỗi Meta" };
   if (post?.automationStatus === "website_error") return { key: "error", label: "Lỗi website" };
   if (post?.automationError) return { key: "error", label: "Lỗi tự động" };
@@ -64,181 +66,7 @@ function postDateLabel(value, timezone) {
 
 
 
-export function DistributionPanel({ data, notify, projectId = "" }) {
-  const projectPosts = (data.socialPosts || []).filter((post) => !projectId || post.projectId === projectId);
-  const [posts, setPosts] = useState(projectPosts);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [groupId, setGroupId] = useState("");
-  const [tokenGroupId, setTokenGroupId] = useState("");
-  const [startAt, setStartAt] = useState("");
-  const [staggerMinutes, setStaggerMinutes] = useState(15);
-  const [postFilter, setPostFilter] = useState("all");
-  const [postSearch, setPostSearch] = useState("");
-  const [busy, setBusy] = useState("");
-  const pages = (data.socialPages || []).filter((page) => !page.archived);
-  const groups = data.settings?.meta?.pageGroups || [];
-  const autoGroups = groups.filter((group) => group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false && group.scheduleConfig?.times?.length);
-  const tokenGroups = data.settings?.meta?.tokenGroups || [];
-  const publications = (data.settings?.meta?.publications || [])
-    .filter((record) => !projectId || !record.projectId || record.projectId === projectId)
-    .slice(-100)
-    .reverse();
-  const publicationRows = publications.map((record, index) => ({
-    ...record,
-    id: "publication:" + (record.idempotencyKey || record.externalPostId || index),
-    isPublication: true,
-    title: record.title || "Bài đăng Meta",
-    contentType: record.contentType || "product",
-    scheduledAt: null,
-    publishedAt: record.publishedAt || null,
-    pageName: record.pageName || record.pageId || "Page Meta",
-  }));
-  const rows = [
-    ...posts,
-    ...publicationRows.filter((record) => !posts.some((post) => post.id === record.postId)),
-  ].sort((left, right) => new Date(right.updatedAt || right.publishedAt || right.createdAt || 0) - new Date(left.updatedAt || left.publishedAt || left.createdAt || 0));
-  const postCounts = rows.reduce((counts, row) => {
-    const key = postState(row).key;
-    counts.all += 1;
-    counts[key] = (counts[key] || 0) + 1;
-    return counts;
-  }, { all: 0, needs_content: 0, draft: 0, ready: 0, scheduled: 0, publishing: 0, error: 0, published: 0 });
-  const searchTerm = postSearch.trim().toLowerCase();
-  const visibleRows = rows.filter((row) => {
-    const state = postState(row);
-    if (postFilter !== "all" && state.key !== postFilter) return false;
-    if (!searchTerm) return true;
-    return (String(row.title || "") + " " + String(row.caption || "") + " " + String(row.pageName || "") + " " + String(row.automationError || row.firstCommentError || "")).toLowerCase().includes(searchTerm);
-  });
-  const selectableRows = visibleRows.filter((post) => !post.isPublication && hasCompletePostContent(post) && ["draft", "ready"].includes(post.status) && !post.pageGroupId);
-
-  useEffect(() => setPosts(projectPosts), [data.socialPosts, projectId]);
-  useEffect(() => setSelectedIds((current) => current.filter((id) => posts.some((post) => post.id === id))), [posts]);
-  useEffect(() => {
-    if (!groupId && autoGroups.length === 1) setGroupId(autoGroups[0].id);
-  }, [autoGroups, groupId]);
-
-  const refresh = async () => {
-    if (busy) return;
-    setBusy("refresh");
-    try {
-      const state = await api("/state");
-      setPosts((state.socialPosts || []).filter((post) => !projectId || post.projectId === projectId));
-    } catch (error) {
-      notify(error.message, "error");
-    } finally {
-      setBusy("");
-    }
-  };
-  const action = async (key, operation, message) => {
-    if (busy) return null;
-    setBusy(key);
-    try {
-      const result = await operation();
-      if (message) notify(message);
-      return result;
-    } catch (error) {
-      notify(error.message, "error");
-      return null;
-    } finally {
-      setBusy("");
-    }
-  };
-  const assignPage = async (post, pageId) => {
-    if (!pageId || post.isPublication) return;
-    const result = await action("page:" + post.id, () => api("/social/posts/" + post.id, { pageId, revision: post.revision }, "PATCH"), "Đã gắn Page cho bài.");
-    if (result) setPosts((current) => current.map((item) => item.id === result.id ? result : item));
-  };
-  const publishNow = async (post) => {
-    const targetGroupId = post.pageGroupId || groupId || autoGroups[0]?.id || "";
-    if (!post.pageId && !targetGroupId) {
-      notify("Chọn Page trước khi đăng ngay.", "error");
-      return;
-    }
-    const result = await action("now:" + post.id, () => api("/social/posts/" + post.id + "/publish-now", { pageId: post.pageId || undefined, pageGroupId: targetGroupId || undefined, revision: post.revision, tokenGroupId: tokenGroupId || undefined }, "POST"), "Đã đưa bài vào hàng đăng; Meta scheduler sẽ xử lý.");
-    if (result) setPosts((current) => current.map((item) => item.id === result.id ? result : item));
-  };
-  const schedule = async () => {
-    if (!groupId || !selectedIds.length) {
-      notify("Chọn nhóm Page và ít nhất một bài đủ Content.", "error");
-      return;
-    }
-    const result = await action("schedule", () => api("/social/groups/" + groupId + "/schedule", {
-      postIds: selectedIds,
-      ...(startAt ? { startAt: new Date(startAt).toISOString() } : {}),
-      staggerMinutes: Number(staggerMinutes),
-      tokenGroupId: tokenGroupId || undefined,
-    }, "POST"), "Đã xếp lịch bài đăng; scheduler sẽ tự publish khi đến giờ.");
-    if (result) {
-      setSelectedIds([]);
-      await refresh();
-    }
-  };
-  const toggle = (id) => setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
-  const selectAll = () => setSelectedIds(selectedIds.length === selectableRows.length && selectableRows.length ? [] : selectableRows.map((post) => post.id));
-
-  return (
-    <section className="pages-distribution-view">
-      <div className="hub-panel pages-distribution-panel">
-        <div className="hub-panel-heading">
-          <div>
-            <span className="hub-kicker"><ClipboardList size={14} /> POST CONTROL</span>
-            <h2>Bài đăng &amp; trạng thái</h2>
-            <p className="pages-panel-copy">Theo dõi Content, lịch Meta, first comment và lỗi đăng ở đây. Video chỉ quản lý trong Thư viện/Kho.</p>
-          </div>
-          <div className="hub-heading-actions">
-            <Button onClick={refresh} busy={busy === "refresh"}><RefreshCw size={14} /> Làm mới trạng thái</Button>
-          </div>
-        </div>
-        <div className="pages-distribution-metrics pages-post-metrics">
-          <div><strong>{postCounts.all}</strong><span>Tất cả bài</span></div>
-          <div><strong>{postCounts.needs_content}</strong><span>Thiếu Content</span></div>
-          <div><strong>{postCounts.scheduled}</strong><span>Đã hẹn giờ</span></div>
-          <div><strong>{postCounts.publishing}</strong><span>Đang đăng</span></div>
-          <div><strong>{postCounts.published}</strong><span>Đã đăng Meta</span></div>
-          <div><strong>{postCounts.error}</strong><span>Lỗi cần xử lý</span></div>
-        </div>
-        <div className="pages-post-toolbar">
-          <div className="pages-post-toolbar-heading"><strong>Danh sách bài đăng</strong><small>Nhóm Auto Post tự lấy video và Content đủ điều kiện theo thứ tự. Chỉ chọn bài khi muốn xếp lịch riêng.</small></div>
-          <div className="pages-post-toolbar-controls">
-            <label><span>Trạng thái</span><select value={postFilter} onChange={(event) => setPostFilter(event.target.value)}><option value="all">Tất cả ({postCounts.all})</option><option value="needs_content">Thiếu Content ({postCounts.needs_content})</option><option value="draft">Bản nháp ({postCounts.draft})</option><option value="ready">Sẵn sàng ({postCounts.ready})</option><option value="scheduled">Đã hẹn giờ ({postCounts.scheduled})</option><option value="publishing">Đang đăng ({postCounts.publishing})</option><option value="error">Lỗi ({postCounts.error})</option><option value="published">Đã đăng Meta ({postCounts.published})</option></select></label>
-            <label className="pages-post-search"><span>Tìm bài</span><div><Search size={14} /><input value={postSearch} onChange={(event) => setPostSearch(event.target.value)} placeholder="Tiêu đề, Page hoặc lỗi..." /></div></label>
-          </div>
-        </div>
-        <div className="pages-schedule-toolbar">
-          <label><span>Nhóm Page</span><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Chọn nhóm để xếp lịch</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.pageIds.length} Page · {group.scheduleConfig?.times?.length ? group.scheduleConfig.times.join(", ") : "giờ tùy chọn"} · {group.scheduleConfig?.timezone || "Asia/Bangkok"}</option>)}</select></label>
-          <label><span>Token pool</span><select value={tokenGroupId} onChange={(event) => setTokenGroupId(event.target.value)}><option value="">Tự chọn token khỏe</option>{tokenGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-          <label><span>Bắt đầu <small>(trống = khung giờ nhóm)</small></span><input type="datetime-local" value={startAt} min={localDateTimeValue()} onChange={(event) => setStartAt(event.target.value)} /></label>
-          <label><span>Cách nhau (phút)</span><input type="number" min="0" max="1440" value={staggerMinutes} onChange={(event) => setStaggerMinutes(event.target.value)} /></label>
-          <Button variant="primary" onClick={schedule} busy={busy === "schedule"} disabled={!selectedIds.length || !groupId}><CalendarClock size={14} /> {"Xếp lịch " + (selectedIds.length ? "(" + selectedIds.length + ")" : "bài")}</Button>
-        </div>
-        <p className="pages-schedule-timezone-note">Lịch nhóm dùng múi giờ <strong>{groups.find((group) => group.id === groupId)?.scheduleConfig?.timezone || "Asia/Bangkok"}</strong>. Auto Post tự gán Page Meta và lấy video theo thứ tự.</p>
-        <div className="pages-post-list-heading"><div><strong>{visibleRows.length} bài hiển thị</strong><small>Đã chọn {selectedIds.length} bài đủ điều kiện</small></div><Button onClick={selectAll} disabled={!selectableRows.length}>{selectedIds.length === selectableRows.length && selectableRows.length ? "Bỏ chọn" : "Chọn bài đủ Content"}</Button></div>
-        {visibleRows.length ? <div className="pages-post-list">{visibleRows.map((post) => {
-          const state = postState(post);
-          const complete = post.isPublication || hasCompletePostContent(post);
-          const page = pages.find((item) => item.id === post.pageId);
-          const group = groups.find((item) => item.id === post.pageGroupId);
-          const canSelect = !post.isPublication && complete && ["draft", "ready"].includes(post.status) && !post.pageGroupId;
-          const selected = selectedIds.includes(post.id);
-          const error = post.automationError || post.firstCommentError || "";
-          return <article className={"pages-post-row " + (selected ? "selected " : "") + (post.isPublication ? "history" : "")} key={post.id}>
-            <div className="pages-post-check">{canSelect ? <input type="checkbox" checked={selected} onChange={() => toggle(post.id)} aria-label={"Chọn " + post.title} /> : <span className={"pages-post-check-mark " + (complete ? "complete" : "missing")}>{complete ? "✓" : "!"}</span>}</div>
-            <div className="pages-post-main">
-              <div className="pages-post-title-line"><strong>{post.title || "Bài đăng chưa có tiêu đề"}</strong><span className="pages-post-type">{post.contentType === "news" ? "NEWS" : "PRODUCT"}</span></div>
-              <div className="pages-post-meta"><span>{page?.name || post.pageName || "Chưa gắn Page"}</span><span>{post.isPublication ? "Lịch sử Meta" : group?.name || "Chưa vào nhóm"}</span>{post.tokenGroupId && <span>Pool đã chọn</span>}</div>
-              <div className="pages-post-detail"><span className={"pages-content-state " + (complete ? "complete" : "missing")}>{complete ? "Content đầy đủ" : "Cần tạo/kiểm tra Content"}</span>{post.scheduledAt && <span><CalendarClock size={12} /> {postDateLabel(post.scheduledAt, page?.timezone)}</span>}{post.publishedAt && <span>Đã xử lý {postDateLabel(post.publishedAt, page?.timezone)}</span>}</div>
-              {error && <p className="pages-post-error">{error}</p>}
-            </div>
-            <div className={"pages-post-status " + state.key}><span><i />{state.label}</span><small>{post.isPublication ? "Meta" : post.automationAttempts ? String(post.automationAttempts) + " lần thử" : post.status}</small></div>
-            {!post.isPublication && <div className="pages-post-actions"><span className="pages-post-auto-target">{post.pageId ? page?.name : post.pageGroupId ? group?.name || "Nhóm Page" : autoGroups.length ? "Tự lấy theo nhóm Auto Post" : "Chưa bật nhóm Auto Post"}</span><Button onClick={() => publishNow(post)} busy={busy === "now:" + post.id} disabled={!complete || post.status === "published" || (!post.pageId && !groupId && !autoGroups.length)}><Send size={12} /> Đăng ngay</Button></div>}
-          </article>;
-        })}</div> : <Empty icon={ClipboardList} title={rows.length ? "Không có bài phù hợp" : "Chưa có bài đăng"}>Tạo Content trong Content Studio hoặc chờ video render hoàn tất; trạng thái sẽ xuất hiện ở đây.</Empty>}
-      </div>
-    </section>
-  );
-}
-
+export function DistributionPanel(props) { return <PostManager {...props}/>; }
 
 export function PagesPage({ data, notify }) {
   const [pages, setPages] = useState(data.socialPages || []);
@@ -466,7 +294,7 @@ export function PagesPage({ data, notify }) {
     setModal({ type, group });
   };
   const groupItems = modal?.type === "token-group" ? (meta?.tokens || []) : (meta?.pages || []);
-  const pageHealth = (page) => page.health || (page.tokenIds?.length ? "HEALTHY" : "UNVERIFIED");
+  const pageHealth = (page) => page.publishingHealth?.blocked ? "ERROR" : page.health || (page.tokenIds?.length ? "HEALTHY" : "UNVERIFIED");
   const allMetaPages = meta?.pages || [];
   const visibleMetaPages = allMetaPages.filter((page) => pageFilter === "all" || pageHealth(page) === pageFilter);
 
@@ -480,6 +308,10 @@ export function PagesPage({ data, notify }) {
   };
   const pruneGroup = async (group) => {
     const result = await action(`prune:${group.id}`, () => api(`/meta/page-groups/${group.id}/prune`, {}, "POST"), "Đã lọc Page lỗi khỏi nhóm.");
+    if (result) await refreshMeta();
+  };
+  const resumePagePublishing = async (page) => {
+    const result = await action(`resume:${page.id}`, () => api(`/meta/pages/${page.id}/resume-publishing`, {}, "POST"), "Đã cho phép thử lại Page. Chỉ đăng lại sau khi đã xử lý hạn chế trên Facebook.");
     if (result) await refreshMeta();
   };
   const toggleGroupAutomation = async (group) => {
@@ -515,20 +347,13 @@ export function PagesPage({ data, notify }) {
     if (result) { closeModal(); await refreshMeta(); }
   };
 
-  useEffect(() => {
-    if (!meta?.connected || !meta?.activeToken?.id || !meta.pages?.length || meta.pages.every((page) => page.avatar)) return;
-    let cancelled = false;
-    api("/meta/refresh-pages", { tokenId: meta.activeToken.id }, "POST")
-      .then((next) => { if (!cancelled) setMeta(next); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [meta?.connected, meta?.activeToken?.id, meta?.pages?.length]);
+
 
   return (
-    <div className={`page workspace-hub pages-hub pages-view-${view}`}>
+    <div className={`page workspace-hub pages-hub managed-workspace pages-view-${view}`}>
       <div className="page-heading hub-heading">
         <div><div className="eyebrow">PAGES WORKSPACE</div><h1>Điều khiển Page gọn trong một màn hình.</h1><p>Chọn đúng khu vực cần làm, xem danh sách trong panel riêng và chuyển sang Content khi đã sẵn sàng.</p></div>
-        <div className="hub-heading-actions"><Button onClick={() => refreshMeta({ sync: true })} busy={busy === "refresh"} disabled={Boolean(busy)}><RefreshCw size={15} /> Làm mới Meta</Button><Button onClick={refreshAllTokens} busy={busy === "refresh-all"} disabled={Boolean(busy)}><RefreshCw size={15} /> Đồng bộ tất cả token</Button><Button variant="primary" onClick={() => { setPageForm(blankPage); setModal({ type: "page-add" }); }} disabled={Boolean(busy)}><Plus size={16} /> Thêm Page</Button></div>
+        <div className="hub-heading-actions"><Button onClick={() => refreshMeta({ sync: true })} busy={busy === "refresh"} disabled={Boolean(busy)}><RefreshCw size={15} /> Làm mới Meta</Button><Button onClick={refreshAllTokens} busy={busy === "refresh-all"} disabled={Boolean(busy)}><RefreshCw size={15} /> Đồng bộ tất cả token</Button></div>
       </div>
       <div className="hub-metrics"><div><span>Page đang hoạt động</span><strong>{activePages}</strong><small>kênh nội dung local</small></div><div><span>Page đã xác minh</span><strong>{verifiedPages}</strong><small>có token binding</small></div><div><span>Token khỏe</span><strong>{(meta?.tokens || []).filter((item) => item.status === "ACTIVE").length}</strong><small>được chọn khi publish</small></div><div><span>Nhóm phân phối</span><strong>{(meta?.pageGroups || []).length + (meta?.tokenGroups || []).length}</strong><small>Page + token groups</small></div></div>
       {tokenSyncProgress ? <div className="bulk-token-progress"><div><strong>{tokenSyncProgress.finished ? "Đã hoàn tất đồng bộ Page" : `Đang đồng bộ token ${tokenSyncProgress.current}/${tokenSyncProgress.total}`}</strong><span>{tokenSyncProgress.ok} thành công · {tokenSyncProgress.failed} lỗi</span></div><progress max={tokenSyncProgress.total} value={tokenSyncProgress.current} /><small className="muted">Chạy tuần tự · nghỉ 0,8 giây giữa token và 5 giây sau mỗi 10 token.</small></div> : null}
@@ -536,18 +361,16 @@ export function PagesPage({ data, notify }) {
         {[["pages", "Page & avatar", UsersRound], ["tokens", "Token", KeyRound], ["groups", "Nhóm phân phối", FolderPlus], ["distribution", "Bài đăng & trạng thái", ClipboardList]].map(([id, label, Icon]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon size={15} /><span>{label}</span></button>)}
       </div>
       <div className="pages-content">
+      {view === "pages" && <PageManager data={data} notify={notify} onAvatar={(ids) => { setAvatarPageIds(ids); setAvatarTargetMode("selected"); setModal({ type: "avatar-bulk" }); }}/>}
       <section className="hub-hero"><div><span className="hub-kicker"><ShieldCheck size={14} /> WORKFLOW</span><h2>{connected ? "Meta đã sẵn sàng cho Content." : "Kết nối Meta để bắt đầu phân phối."}</h2><p>{connected ? "Chọn Page ở đây, sau đó sang Content để soạn caption, first comment và link bài viết." : "Token được kiểm tra qua /me và /me/accounts; public state chỉ trả metadata và token mask."}</p></div>{connected ? <select aria-label="Page Meta đang gắn" value={meta?.boundPage?.id || ""} onChange={bindPage}><option value="">Chọn Page để gắn</option>{(meta.pages || []).map((page) => <option key={page.id} value={page.id}>{page.name} · {page.id}</option>)}</select> : <Button variant="primary" onClick={() => setModal({ type: "token" })}><KeyRound size={15} /> Thêm token Meta</Button>}</section>
-      <section className="hub-panel pages-management-panel pages-panel">
-        <div className="hub-panel-heading"><div><span className="hub-kicker"><Filter size={14} /> PAGE HEALTH</span><h2>Page đồng bộ từ Meta</h2></div><div className="hub-heading-actions"><select value={pageFilter} onChange={(event) => setPageFilter(event.target.value)}><option value="all">Tất cả Page</option><option value="HEALTHY">Token khỏe</option><option value="ERROR">Có lỗi</option><option value="UNVERIFIED">Chưa xác minh</option></select><Button onClick={openAvatarModal}><WandSparkles size={14} /> Đổi avatar AI hàng loạt</Button></div></div>
-        {visibleMetaPages.length ? <div className="hub-list">{visibleMetaPages.map((page) => <article className="hub-list-row" key={page.id}>{page.avatar ? <img className="hub-avatar-image" src={page.avatar} alt={`Avatar ${page.name}`} /> : <span className="hub-avatar">f</span>}<div><strong>{page.name}</strong><small>{page.id} · {page.bindingCount || page.tokenIds?.length || 0} token binding{page.avatarStatus && page.avatarStatus !== "ready" ? ` · avatar ${page.avatarStatus}` : ""}{page.avatarError ? ` · ${page.avatarError}` : ""}{page.errorMessage ? ` · ${page.errorMessage}` : ""}</small></div><Badge status={pageHealth(page) === "HEALTHY" ? "ready" : pageHealth(page) === "ERROR" ? "error" : "offline"} /></article>)}</div> : <Empty icon={UsersRound} title="Không có Page phù hợp">Đổi bộ lọc hoặc đồng bộ lại token.</Empty>}
-      </section>
+
       <div className="hub-columns pages-columns pages-pages-row">
-        <section className="hub-panel pages-local-panel"><div className="hub-panel-heading"><div><span className="hub-kicker">CHANNELS</span><h2>Page local</h2></div><div className="inline-actions"><Button onClick={syncLocalPages} busy={busy === "sync-local-pages"} disabled={!allMetaPages.length}><RefreshCw size={14} /> Tạo từ Meta ({allMetaPages.length})</Button><Button onClick={() => { setPageForm(blankPage); setModal({ type: "page-add" }); }}><Plus size={14} /> Page mới</Button></div></div>{pages.length ? <div className="hub-list">{pages.map((page) => { const metaPage = allMetaPages.find((item) => item.id === page.externalId); const avatar = page.avatar || metaPage?.avatar || ""; return <article className="hub-list-row" key={page.id}>{avatar ? <img className="hub-avatar-image" src={avatar} alt={`Avatar ${page.name}`} /> : <span className="hub-avatar">f</span>}<div><strong>{page.name}</strong><small>{page.externalId || "Chưa gắn Page ID"} · {page.timezone}</small></div><Badge status={page.archived ? "offline" : "ready"} /><Button className="icon-button" aria-label={`Sửa ${page.name}`} onClick={() => { setPageForm(page); setModal({ type: "page-edit", page }); }}><Link2 size={14} /></Button></article>; })}</div> : <Empty icon={UsersRound} title="Chưa có Page local">Bấm “Tạo từ Meta” để đưa Page đã xác minh vào nơi gắn Content và lịch đăng.</Empty>}</section>
+
         <section className="hub-panel pages-token-panel"><div className="hub-panel-heading"><div><span className="hub-kicker">TOKEN VAULT</span><h2>Credential pool</h2></div><Button onClick={() => setModal({ type: "token" })}><Plus size={14} /> Token</Button></div>{meta?.tokens?.length ? <div className="hub-list">{meta.tokens.map((item) => <article className="hub-list-row" key={item.id}><span className="hub-token-icon"><KeyRound size={14} /></span><div><strong>{item.name}</strong><small>{item.tokenMasked || "***"} · {item.pagesCount || 0} Page · {item.kind === "VIA_TOKEN" ? `Via Token · App ${item.appId || "?"}` : "System User"}</small></div><Badge status={item.status === "ACTIVE" ? "ready" : item.status === "ERROR" ? "error" : "offline"} /><div className="inline-actions"><Button className="icon-button" title="Đồng bộ lại Page" onClick={() => action(`refresh-token:${item.id}`, () => api(`/meta/tokens/${item.id}/refresh-pages`, {}, "POST"), "Đã đồng bộ lại Page từ token.").then(refreshMeta)} busy={busy === `refresh-token:${item.id}`}><RefreshCw size={13} /></Button><Button className="icon-button danger-text" title="Xóa token" onClick={async () => { if (!confirm(`Xóa token ${item.name}?`)) return; const result = await action(`delete-token:${item.id}`, () => api(`/meta/tokens/${item.id}`, {}, "DELETE"), "Đã xóa token."); if (result) await refreshMeta(); }} busy={busy === `delete-token:${item.id}`}><Trash2 size={13} /></Button></div></article>)}</div> : <Empty icon={KeyRound} title="Vault đang trống">Thêm token do bạn sở hữu để xác minh quyền Page.</Empty>}</section>
       </div>
-  <div className="hub-columns pages-columns pages-groups-row"><section className="hub-panel pages-page-groups-panel"><div className="hub-panel-heading"><div><span className="hub-kicker">PAGE GROUPS</span><h2>Nhóm Page</h2></div><Button onClick={() => openGroup("page-group")}><FolderPlus size={14} /> Tạo nhóm</Button></div>{(meta?.pageGroups || []).length ? meta.pageGroups.map((group) => <div className="hub-group-row" key={group.id}><strong>{group.name}</strong><span>{group.pageIds.length} Page</span><span className={group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false ? "page-group-auto-status on" : "page-group-auto-status"}>{group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false ? "AUTO POST: ON" : "AUTO POST: OFF"}</span><div className="hub-group-rule"><small>{group.scheduleConfig?.times?.length ? `Mỗi ngày: ${group.scheduleConfig.times.join(", ")}` : "Chưa đặt khung giờ"} · {group.scheduleConfig?.enabled ? `Tự động ${group.scheduleConfig?.dailyLimit || group.scheduleConfig.times?.length || 1} video/ngày` : "Tự động đang tắt"}{group.scheduleConfig?.tokenGroupId ? ` · Pool: ${(meta?.tokenGroups || []).find((item) => item.id === group.scheduleConfig.tokenGroupId)?.name || "đã chọn"}` : ""}</small><Button onClick={() => toggleGroupAutomation(group)} busy={busy === `automation:${group.id}`} disabled={Boolean(busy) && busy !== `automation:${group.id}`}>{group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false ? "\u0054\u1EAFt Auto Post" : "B\u1EADt Auto Post"}</Button><Button onClick={() => openGroup("page-group", group)}><CalendarClock size={13} /> Sửa lịch</Button></div><Button onClick={() => pruneGroup(group)} busy={busy === `prune:${group.id}`}><Filter size={13} /> Lọc Page lỗi</Button></div>) : <p className="hub-empty">Tạo nhóm theo kênh, thị trường hoặc lịch đăng.</p>}</section><section className="hub-panel pages-token-groups-panel"><div className="hub-panel-heading"><div><span className="hub-kicker">TOKEN GROUPS</span><h2>Pool token</h2></div><Button onClick={() => openGroup("token-group")}><FolderPlus size={14} /> Tạo pool</Button></div>{(meta?.tokenGroups || []).length ? meta.tokenGroups.map((group) => <div className="hub-group-row" key={group.id}><strong>{group.name}</strong><span>{group.tokenIds.length} token · {group.assignedPageCount || 0}/{group.pageIds?.length || 0} Page đã chia / {tokenLoadLabel(group)}</span><div className="hub-group-rule"><small>{group.strategy === "round_robin" ? "Luân phiên đều" : group.strategy === "random" ? "Ngẫu nhiên" : "Token ít dùng nhất"}{group.maxPagesPerToken ? ` · tối đa ${group.maxPagesPerToken} Page/token` : " · tự cân bằng"}{group.assignmentBlockedCount ? ` · ${group.assignmentBlockedCount} Page cần Sync lại` : ""}</small><Button onClick={() => autoAssignTokenGroup(group)} busy={busy === `assign-token-group:${group.id}`}><RefreshCw size={13} /> Tự chia Page</Button><Button onClick={() => openGroup("token-group", group)}><FolderPlus size={13} /> Sửa pool</Button></div></div>) : <p className="hub-empty">Tạo pool theo team hoặc quota để Studio tự chia Page vào token khỏe.</p>}</section></div>
+  <div className="hub-columns pages-columns pages-groups-row"><section className="hub-panel pages-page-groups-panel"><div className="hub-panel-heading"><div><span className="hub-kicker">PAGE GROUPS</span><h2>Nhóm Page</h2></div><Button onClick={() => openGroup("page-group")}><FolderPlus size={14} /> Tạo nhóm</Button></div>{(meta?.pageGroups || []).length ? meta.pageGroups.map((group) => <div className="hub-group-row" key={group.id}><strong>{group.name}</strong><span>{group.pageIds.length} Page</span><span className={group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false ? "page-group-auto-status on" : "page-group-auto-status"}>{group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false ? "AUTO POST: ON" : "AUTO POST: OFF"}</span><div className="hub-group-rule"><small>{group.scheduleConfig?.times?.length ? `Mỗi ngày: ${group.scheduleConfig.times.join(", ")}` : "Chưa đặt khung giờ"} · {group.scheduleConfig?.enabled ? `Tự động ${group.scheduleConfig?.dailyLimit || group.scheduleConfig.times?.length || 1} video/ngày` : "Tự động đang tắt"}{group.scheduleConfig?.tokenGroupId ? ` · Pool: ${(meta?.tokenGroups || []).find((item) => item.id === group.scheduleConfig.tokenGroupId)?.name || "đã chọn"}` : ""}</small><Button onClick={() => toggleGroupAutomation(group)} busy={busy === `automation:${group.id}`} disabled={group.purpose === "review" || group.id.startsWith("pgrp_hold_") || Boolean(busy) && busy !== `automation:${group.id}`}>{group.scheduleConfig?.enabled && group.scheduleConfig?.autoPublish !== false ? "\u0054\u1EAFt Auto Post" : "B\u1EADt Auto Post"}</Button><Button onClick={() => openGroup("page-group", group)}><CalendarClock size={13} /> Sửa lịch</Button></div><Button onClick={() => pruneGroup(group)} busy={busy === `prune:${group.id}`}><Filter size={13} /> Lọc Page lỗi</Button></div>) : <p className="hub-empty">Tạo nhóm theo kênh, thị trường hoặc lịch đăng.</p>}</section><section className="hub-panel pages-token-groups-panel"><div className="hub-panel-heading"><div><span className="hub-kicker">TOKEN GROUPS</span><h2>Pool token</h2></div><Button onClick={() => openGroup("token-group")}><FolderPlus size={14} /> Tạo pool</Button></div>{(meta?.tokenGroups || []).length ? meta.tokenGroups.map((group) => <div className="hub-group-row" key={group.id}><strong>{group.name}</strong><span>{group.tokenIds.length} token · {group.assignedPageCount || 0}/{group.pageIds?.length || 0} Page đã chia / {tokenLoadLabel(group)}</span><div className="hub-group-rule"><small>{group.strategy === "round_robin" ? "Luân phiên đều" : group.strategy === "random" ? "Ngẫu nhiên" : "Token ít dùng nhất"}{group.maxPagesPerToken ? ` · tối đa ${group.maxPagesPerToken} Page/token` : " · tự cân bằng"}{group.assignmentBlockedCount ? ` · ${group.assignmentBlockedCount} Page cần Sync lại` : ""}</small><Button onClick={() => autoAssignTokenGroup(group)} busy={busy === `assign-token-group:${group.id}`}><RefreshCw size={13} /> Tự chia Page</Button><Button onClick={() => openGroup("token-group", group)}><FolderPlus size={13} /> Sửa pool</Button></div></div>) : <p className="hub-empty">Tạo pool theo team hoặc quota để Studio tự chia Page vào token khỏe.</p>}</section></div>
       </div>
-      <DistributionPanel data={data} notify={notify} />
+      {view === "distribution" && <DistributionPanel data={data} notify={notify} />}
       {modal?.type === "avatar-bulk" ? <Modal wide title="Đổi avatar Page bằng AI" onClose={closeModal}><form onSubmit={generateAvatars}><Notice>Avatar generation is separate from Page publishing; requests are throttled per token.</Notice><Field label="Phạm vi đổi avatar"><select name="targetMode" value={avatarTargetMode} onChange={(event) => setAvatarTargetMode(event.target.value)}><option value="all">Tất cả Page đang hiển thị ({visibleMetaPages.length})</option><option value="selected">Chọn từng Page ({avatarPageIds.length})</option>{(meta?.pageGroups || []).map((group) => <option key={group.id} value={`group:${group.id}`}>Nhóm: {group.name} · {group.pageIds.length} Page</option>)}</select></Field>{avatarTargetMode === "selected" ? <><div className="avatar-picker-toolbar"><span>{avatarPageIds.length} Page được chọn</span><div><Button type="button" onClick={() => setAvatarPageIds(allMetaPages.map((page) => page.id))}>Chọn tất cả</Button><Button type="button" onClick={() => setAvatarPageIds([])}>Bỏ chọn</Button></div></div><div className="hub-picker avatar-page-picker">{allMetaPages.map((page) => <label key={page.id}><input type="checkbox" checked={avatarPageIds.includes(page.id)} onChange={() => toggleAvatarPage(page.id)} />{page.avatar ? <img className="avatar-page-picker-image" src={page.avatar} alt="" /> : <span className="hub-avatar">f</span>}<span><strong>{page.name}</strong><small>{page.id}</small></span></label>)}</div></> : null}<Field label="Mô tả avatar"><textarea name="prompt" rows="4" defaultValue="Professional editorial social media page avatar, clean bold composition, square portrait, consistent brand colors, no text, no logos, no watermark." /></Field><label className="check-field"><input name="useLlm" type="checkbox" defaultChecked={data.settings?.llm?.enabled === true} /><span /> Dùng LLM tối ưu prompt trước khi render</label><label className="check-field"><input name="apply" type="checkbox" /><span /> Áp dụng lên Page Meta sau khi tạo ảnh</label><p className="avatar-rate-note">Một ảnh được tạo và dùng cho các Page đã chọn. Apply chạy tuần tự theo token, nghỉ 1 giây giữa request và 5 giây sau mỗi 10 Page.</p><div className="modal-actions"><Button type="button" onClick={closeModal}>Hủy</Button><Button variant="primary" busy={busy === "avatar-bulk"}><WandSparkles size={15} /> Tạo avatar</Button></div></form></Modal> : null}
       {modal?.type === "page-add" || modal?.type === "page-edit" ? <Modal title={modal.type === "page-edit" ? "Sửa Page" : "Thêm Page local"} onClose={closeModal}><form onSubmit={savePage}><div className="form-grid"><Field label="Tên Page"><input name="name" required maxLength={120} value={pageForm.name} onChange={(event) => setPageForm({ ...pageForm, name: event.target.value })} /></Field><Field label="Page ID"><input name="externalId" inputMode="numeric" value={pageForm.externalId} onChange={(event) => setPageForm({ ...pageForm, externalId: event.target.value })} placeholder="ID Meta" /></Field><Field label="Facebook URL"><input name="url" type="url" value={pageForm.url} onChange={(event) => setPageForm({ ...pageForm, url: event.target.value })} /></Field><Field label="Múi giờ"><input name="timezone" value={pageForm.timezone} onChange={(event) => setPageForm({ ...pageForm, timezone: event.target.value })} /></Field></div><Field label="Ghi chú"><textarea name="notes" rows="3" value={pageForm.notes} onChange={(event) => setPageForm({ ...pageForm, notes: event.target.value })} /> </Field>{modal.type === "page-edit" && <label className="check-field"><input name="archived" type="checkbox" checked={pageForm.archived} onChange={(event) => setPageForm({ ...pageForm, archived: event.target.checked })} /><span /> Lưu trữ Page</label>}<div className="modal-actions"><Button type="button" onClick={closeModal}>Hủy</Button><Button variant="primary" busy={busy === "page"}><Check size={15} /> Lưu Page</Button></div></form></Modal> : null}
       {modal?.type === "token" ? <Modal wide title="Thêm credential Meta" onClose={closeModal}><form onSubmit={addToken}><Notice>Chọn System User hoặc Via Token. Via Token bắt buộc có App ID, App Secret và Via Token; App Secret chỉ lưu local.</Notice><Field label={tokenForm.kind === "VIA_TOKEN" ? "Via Token" : "System User access token"}><input type="password" required autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder={tokenForm.kind === "VIA_TOKEN" ? "Dán Via Token do bạn sở hữu" : "Dán System User token do bạn sở hữu"} /></Field><div className="form-grid"><Field label="Tên kết nối"><input value={tokenForm.name} onChange={(event) => setTokenForm({ ...tokenForm, name: event.target.value })} placeholder="Team Content 01" /></Field><Field label="Loại credential"><select value={tokenForm.kind} onChange={(event) => setTokenForm({ ...tokenForm, kind: event.target.value })}><option value="SYSTEM_USER">System User</option><option value="VIA_TOKEN">Via Token · App ID + App Secret</option></select></Field>{tokenForm.kind === "VIA_TOKEN" && <><Field label="App ID"><input required value={tokenForm.appId} maxLength={200} autoComplete="off" placeholder="Meta App ID" onChange={(event) => setTokenForm({ ...tokenForm, appId: event.target.value })} /></Field><Field label="App Secret"><input required type="password" value={tokenForm.appSecret} maxLength={5000} autoComplete="new-password" placeholder="Meta App Secret" onChange={(event) => setTokenForm({ ...tokenForm, appSecret: event.target.value })} /></Field></>}</div><div className="meta-token-type-help"><Info size={15} /><span>{tokenForm.kind === "VIA_TOKEN" ? "Via Token được kiểm tra qua /debug_token trước khi đồng bộ Page." : "System User token cần được cấp Page asset và quyền phù hợp trong Meta Business Settings."}</span></div><Field label="Ghi chú"><textarea rows="2" value={tokenForm.note} onChange={(event) => setTokenForm({ ...tokenForm, note: event.target.value })} /></Field><Button type="button" onClick={() => { setBulkProgress(null); setModal({ type: "bulk-token" }); }}><KeyRound size={14} /> Nhập nhanh danh sách token</Button><div className="modal-actions"><Button type="button" onClick={closeModal}>Hủy</Button><Button variant="primary" busy={busy === "token"}>Kiểm tra & lưu</Button></div></form></Modal> : null}

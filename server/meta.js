@@ -7,6 +7,10 @@ import { importMedia } from "./media.js";
 import { generateImageEndpoint, resolveMcImageConfig } from "./mc-image.js";
 import { requestJsonContent } from "./llm.js";
 import { autoScheduleWarehousePosts, normalizeScheduleConfig } from "./social.js";
+import { classifyMetaFailure, metaResponseDetails } from "./meta-errors.js";
+import { mountManagementRoutes } from "./management.js";
+import { cleanupPublishedMedia, publishedVideo, returnPostToWarehouse } from "./post-lifecycle.js";
+import { managedPageUnavailable } from "../shared/management.js";
 
 const GRAPH_VERSION = "v26.0";
 const accessTokenSchema = z.string().trim().min(10).max(5000);
@@ -29,29 +33,6 @@ function safeMessage(value, ...secrets) {
   return secrets.filter(Boolean).reduce((current, secret) => current.split(String(secret)).join("[redacted]"), message);
 }
 
-async function cleanupPublishedMedia(store, mediaId, postId) {
-  const media = store.state.media.find((item) => item.id === mediaId);
-  if (!media) return { removed: false, reason: "media_not_found" };
-  const inTimeline = store.state.projects.some((project) =>
-    project.timeline.clips.some((clip) => clip.mediaId === media.id) ||
-    project.timeline.images.some((image) => image.mediaId === media.id) ||
-    project.timeline.music?.mediaId === media.id,
-  );
-  const inJob = store.state.jobs.some((job) =>
-    ["queued", "scheduled", "preparing", "submitting", "rendering", "downloading"].includes(job.status) &&
-    String(JSON.stringify(job.payload) || "").includes(media.id),
-  );
-  const inSocialPost = store.state.socialPosts.some((post) => post.id !== postId && post.mediaIds?.includes(media.id));
-  if (inTimeline || inJob || inSocialPost) return { removed: false, reason: "media_still_referenced" };
-  try {
-    await Promise.all([media.file, media.thumbnail, media.previewFile].filter(Boolean).map((file) => fs.rm(file, { force: true })));
-    store.state.media = store.state.media.filter((item) => item.id !== media.id);
-    return { removed: true, mediaId: media.id, name: media.name || "" };
-  } catch (error) {
-    return { removed: false, reason: "media_cleanup_failed", error: safeMessage(error.message) };
-  }
-}
-
 function publicPage(page) {
   const bindings = Object.values(page.tokenBindings || {});
   const verified = bindings.filter((binding) => binding?.status === "VERIFIED" && binding.pageToken);
@@ -70,8 +51,9 @@ function publicPage(page) {
     hasToken: Boolean(page.accessToken),
     tokenIds: Object.keys(page.tokenBindings || {}),
     groupIds: Array.isArray(page.groupIds) ? page.groupIds : [],
-    health: verified.length ? "HEALTHY" : failed ? "ERROR" : "UNVERIFIED",
-    errorMessage: String(failed?.errorMessage || ""),
+    health: page.publishingHealth?.blocked ? "ERROR" : verified.length ? "HEALTHY" : failed ? "ERROR" : "UNVERIFIED",
+    errorMessage: String(page.publishingHealth?.blocked ? page.publishingHealth.message : failed?.errorMessage || ""),
+    publishingHealth: page.publishingHealth || null,
     bindingCount: bindings.length,
   };
 }
@@ -136,6 +118,7 @@ function publicTokenGroup(group) {
 function publicPageGroup(group) {
   return {
     id: group.id,
+    purpose: group.purpose || (group.id.startsWith('pgrp_hold_') ? 'review' : 'active'),
     name: group.name,
     pageIds: Array.isArray(group.pageIds) ? group.pageIds : [],
     folderBinding: group.folderBinding || "",
@@ -152,7 +135,7 @@ function publicMeta(meta) {
     graphVersion: meta?.graphVersion || GRAPH_VERSION,
     user: meta?.user || null,
     activeToken: active ? { id: active.id, name: active.name || active.id } : null,
-    pages: (meta?.pages || []).map(publicPage),
+    pages: (meta?.pages || []).filter(page => page.management?.status !== 'deleted').map(publicPage),
     tokens: (meta?.tokens || []).map(publicToken),
     tokenGroups: (meta?.tokenGroups || []).map(publicTokenGroup),
     pageGroups: (meta?.pageGroups || []).map(publicPageGroup),
@@ -176,7 +159,9 @@ async function jsonResponse(response, token, extraSecrets = []) {
   if (!response.ok || body?.error) {
     const message = body?.error?.message || `Meta Graph HTTP ${response.status}`;
     const redacted = [token, ...extraSecrets].filter(Boolean).reduce((value, secret) => safeMessage(value, secret), message);
-    throw new StudioError(redacted, "META_GRAPH_ERROR", response.status >= 400 && response.status < 600 ? 502 : 502);
+    const error = new StudioError(redacted, "META_GRAPH_ERROR", 502);
+    error.metaError = metaResponseDetails(response, body);
+    throw error;
   }
   return body || {};
 }
@@ -207,7 +192,7 @@ async function collectPagedPages(first, token, fetchImpl) {
 
 export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "https://graph.facebook.com", graphVersion = GRAPH_VERSION } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch is required");
-  const request = async ({ token, path, method = "GET", params = {}, body = null, headers = {} }) => {
+  const request = async ({ token, path, method = "GET", params = {}, body = null, headers = {}, signal }) => {
     const requestHeaders = { accept: "application/json", ...headers };
     let requestBody = body;
     const requestParams = { ...params };
@@ -222,11 +207,13 @@ export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "ht
       method,
       headers: requestHeaders,
       body: requestBody,
+      signal,
     });
     return jsonResponse(response, token);
   };
   return {
     me: (token) => request({ token, path: "me", params: { fields: "id,name" } }),
+    pageStatus: ({ token, pageId, signal }) => request({ token, path: String(pageId), params: { fields: "id,name,is_published" }, signal }),
     pages: async (token) => collectPagedPages(
       await request({ token, path: "me/accounts", params: { fields: "id,name,access_token,tasks,picture{url}" } }),
       token,
@@ -266,6 +253,7 @@ export function createMetaClient({ fetchImpl = globalThis.fetch, graphBase = "ht
       method: "POST",
       body: new URLSearchParams({ upload_phase: "finish", video_id: String(videoId), video_state: "PUBLISHED", description: String(description || "").slice(0, 2000) }),
     }),
+    videoStatus: ({ token, videoId }) => request({ token, path: String(videoId), params: { fields: "id,status,permalink_url" } }),
     comment: ({ token, objectId, message }) => request({
       token,
       path: `${objectId}/comments`,
@@ -536,6 +524,12 @@ function requirePostPage(store, meta, post, tokenIds = [], tokenGroup = null) {
   const local = store.state.socialPages.find((page) => page.id === post?.pageId && !page.archived);
   const targetId = String(local?.externalId || "").trim();
   const current = targetId ? meta.pages.find((page) => page.id === targetId) : null;
+  if (managedPageUnavailable(current, local) && !current?.publishingHealth?.blocked) throw new StudioError("Page đang chờ xử lý, lưu trữ hoặc chưa công khai. Mở Quản lý Page để xử lý trước.", "META_PAGE_ON_HOLD", 409);
+  if (current?.publishingHealth?.blocked) {
+    const error = new StudioError(current.publishingHealth.message || "Page đang bị giới hạn đăng; xử lý trên Facebook trước khi cho phép thử lại.", "META_PAGE_PUBLISHING_BLOCKED", 409);
+    error.metaError = current.publishingHealth.details;
+    throw error;
+  }
   const resolvedGroup = tokenGroup || (post?.pageGroupId ? meta.pageGroups.find((group) => group.id === post.pageGroupId && group.scheduleConfig?.tokenGroupId) && meta.tokenGroups.find((group) => group.id === meta.pageGroups.find((item) => item.id === post.pageGroupId)?.scheduleConfig?.tokenGroupId) : null) || meta.tokenGroups.find((group) => group.pageTokenBindings?.[current?.id]);
   const resolvedTokenIds = tokenIds.length ? tokenIds : resolvedGroup?.tokenIds || [];
   if (current?.tokenBindings && meta.tokens?.length) {
@@ -569,6 +563,8 @@ function postPreflight(store, post, meta) {
   checks.push({ key: "status", ok: Boolean(post && ["ready", "scheduled"].includes(post.status)), message: post ? `Trạng thái hiện tại: ${post.status}.` : "Không tìm thấy bài đăng." });
   const page = localPage;
   checks.push({ key: "page_match", ok: Boolean(post && page && page.externalId && targetManagedPage && page.externalId === targetManagedPage.id), message: page?.externalId ? `Page local: ${page.externalId}.` : "Bài chưa gắn Page ID Meta." });
+  checks.push({ key: "publishing_permission", ok: !targetManagedPage?.publishingHealth?.blocked, message: targetManagedPage?.publishingHealth?.blocked ? targetManagedPage.publishingHealth.message : "Page không có lỗi giới hạn đăng đã ghi nhận." });
+  checks.push({ key: "page_lifecycle", ok: !managedPageUnavailable(targetManagedPage, localPage), message: "Page phải đang dùng, không lưu trữ hoặc chờ xử lý." });
   if (post?.pageGroupId) {
     const group = (meta.pageGroups || []).find((item) => item.id === post.pageGroupId);
     const inGroup = Boolean(group && targetPageId && group.pageIds.includes(targetPageId));
@@ -591,6 +587,7 @@ function postPreflight(store, post, meta) {
 }
 
 export function mountMetaRoutes(app, store, { client = createMetaClient(), llm = requestJsonContent, fetchImpl = globalThis.fetch } = {}) {
+  const management = mountManagementRoutes(app, store, { client, postPreflight });
   app.get("/api/meta/pages/:id/avatar", async (req, res) => {
     const meta = metaState(store);
     const page = meta.pages.find((item) => item.id === String(req.params.id));
@@ -947,7 +944,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     const group = meta.pageGroups.find((item) => item.id === req.params.id);
     if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
     const before = [...group.pageIds];
-    const healthy = (page) => Object.entries(page.tokenBindings || {}).some(([tokenId, binding]) => {
+    const healthy = (page) => !page.publishingHealth?.blocked && Object.entries(page.tokenBindings || {}).some(([tokenId, binding]) => {
       const token = meta.tokens.find((item) => item.id === tokenId);
       return token?.status === "ACTIVE" && Boolean(binding?.pageToken) && binding.status !== "ERROR";
     });
@@ -1061,6 +1058,14 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     res.json(postPreflight(store, post, metaState(store)));
   });
 
+  app.post("/api/meta/pages/:id/resume-publishing", (req, res) => {
+    const page = metaState(store).pages.find(item => item.id === req.params.id);
+    if (!page) throw new StudioError("Không tìm thấy Page.", "META_PAGE_NOT_FOUND", 404);
+    page.publishingHealth = { ...page.publishingHealth, blocked: false, resumedAt: new Date().toISOString() };
+    store.save();
+    res.json({ page: publicPage(page) });
+  });
+
   const publishTokenNextAt = new Map();
   const reservePublishSlot = async (page) => {
     const key = String(page?.tokenId || `page:${page?.id || "unknown"}`);
@@ -1070,11 +1075,31 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     if (next > current) await wait(next - current);
   };
 
-  const publishReel = async ({ postId, idempotencyKey }) => {
+  const sendFirstComment = async (page, videoId, message) => {
+    try {
+      if (typeof client.videoStatus === "function") {
+        const video = await client.videoStatus({ token: page.accessToken, videoId });
+        if (video.status?.video_status !== "ready" || video.status?.publishing_phase?.publish_status !== "published") {
+          throw new StudioError("Meta đang xử lý video; sẽ chỉ thử lại bình luận, không đăng lại video.", "META_VIDEO_PROCESSING", 409);
+        }
+      }
+      return await client.comment({ token: page.accessToken, objectId: videoId, message });
+    } catch (error) {
+      // A just-published video may not be visible to the comments edge yet.
+      if (error.metaError?.code === 100 && error.metaError?.subcode === 33) error.code = "META_VIDEO_PROCESSING";
+      throw error;
+    }
+  };
+
+  const publishReelAttempt = async ({ postId, idempotencyKey }) => {
     const parsedPostId = z.string().uuid().parse(postId);
-    const parsedKey = z.string().trim().min(8).max(160).parse(idempotencyKey || `${parsedPostId}:${store.require("socialPosts", parsedPostId).revision}`);
+    const requestedKey = z.string().trim().min(8).max(160).parse(idempotencyKey || `${parsedPostId}:${store.require("socialPosts", parsedPostId).revision}`);
     const meta = metaState(store);
-    const existing = meta.publications.find((item) => item.idempotencyKey === parsedKey);
+    // A manual retry changes the revision/key, but the already-published Reel
+    // must keep its original record and only retry the failed first comment.
+    const existing = meta.publications.find((item) => item.idempotencyKey === requestedKey)
+      || meta.publications.find((item) => item.postId === parsedPostId && item.status === "published_comment_error");
+    const parsedKey = existing?.idempotencyKey || requestedKey;
     if (existing?.status === "published") return existing;
     const post = store.require("socialPosts", parsedPostId);
     if (existing?.status === "published_comment_error") {
@@ -1085,7 +1110,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
       const page = requirePostPage(store, meta, post, tokenGroup?.tokenIds || [], tokenGroup);
       try {
         await reservePublishSlot(page);
-        await client.comment({ token: page.accessToken, objectId: existing.externalPostId, message: post.firstComment });
+        await sendFirstComment(page, existing.externalPostId, post.firstComment);
       } catch (error) {
         const retryRecord = {
           ...existing,
@@ -1096,9 +1121,10 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
           status: "published_comment_error",
           firstCommentStatus: "error",
           firstCommentError: safeMessage(error.message, page.accessToken),
+          firstCommentErrorDetails: classifyMetaFailure(error),
           removedFromQueue: false,
         };
-        meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(retryRecord).slice(-200);
+        meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(retryRecord);
         Object.assign(post, {
           automationStatus: "meta_error",
           automationError: retryRecord.firstCommentError,
@@ -1118,7 +1144,8 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
       const mediaCleanup = await cleanupPublishedMedia(store, post.mediaIds?.[0], post.id);
       const recovered = { ...existing, postId: existing.postId || post.id, projectId: existing.projectId || post.projectId, title: existing.title || post.title, contentType: existing.contentType || post.contentType, status: "published", firstCommentStatus: "published", removedFromQueue: true, mediaCleanup };
       delete recovered.firstCommentError;
-      meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(recovered).slice(-200);
+      delete recovered.firstCommentErrorDetails;
+      meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(recovered);
       store.state.socialPosts = store.state.socialPosts.filter((item) => item.id !== post.id);
       store.save();
       return recovered;
@@ -1137,19 +1164,26 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     if (start.upload_url) await client.uploadChunk({ token: page.accessToken, uploadUrl: start.upload_url, bytes });
     const finish = await client.finishReel({ token: page.accessToken, pageId: page.id, videoId, description: post.caption });
     const externalPostId = String(finish.id || videoId);
+    // Persist the published video before checking readiness or sending a comment.
+    // A processing delay or process exit must never cause another video upload.
+    const pendingRecord = { idempotencyKey: parsedKey, postId: post.id, projectId: post.projectId, mediaIds: [...post.mediaIds], title: post.title, contentType: post.contentType, status: "published_comment_error", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus: "error", firstCommentError: "Đang chờ Meta xử lý video trước khi gửi bình luận.", removedFromQueue: false, publishedAt: new Date().toISOString() };
+    meta.publications = meta.publications.filter(item => item.idempotencyKey !== parsedKey).concat(pendingRecord);
+    store.save();
     let firstCommentStatus = "published";
     let firstCommentError = "";
+    let firstCommentErrorDetails = null;
     try {
-      await client.comment({ token: page.accessToken, objectId: externalPostId, message: post.firstComment });
+      await sendFirstComment(page, externalPostId, post.firstComment);
     } catch (error) {
       firstCommentStatus = "error";
       firstCommentError = safeMessage(error.message, page.accessToken);
+      firstCommentErrorDetails = classifyMetaFailure(error);
     }
     const mediaCleanup = firstCommentError
       ? { removed: false, reason: "first_comment_failed" }
       : await cleanupPublishedMedia(store, post.mediaIds?.[0], post.id);
-    const record = { idempotencyKey: parsedKey, postId: post.id, projectId: post.projectId, title: post.title, contentType: post.contentType, status: firstCommentError ? "published_comment_error" : "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus, ...(firstCommentError ? { firstCommentError } : {}), removedFromQueue: !firstCommentError, mediaCleanup, publishedAt: new Date().toISOString() };
-    meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(record).slice(-200);
+    const record = { idempotencyKey: parsedKey, postId: post.id, projectId: post.projectId, mediaIds: [...post.mediaIds], title: post.title, contentType: post.contentType, status: firstCommentError ? "published_comment_error" : "published", pageId: page.id, pageName: page.name, externalPostId, permalink: finish.permalink || `https://www.facebook.com/${externalPostId}`, firstCommentStatus, ...(firstCommentError ? { firstCommentError, firstCommentErrorDetails } : {}), removedFromQueue: !firstCommentError, mediaCleanup, publishedAt: new Date().toISOString() };
+    meta.publications = meta.publications.filter((item) => item.idempotencyKey !== parsedKey).concat(record);
     if (firstCommentError) {
       Object.assign(post, {
         automationStatus: "meta_error",
@@ -1172,6 +1206,40 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     return record;
   };
 
+  const publishReel = async (input) => {
+    try {
+      const result = await publishReelAttempt(input);
+      const page = metaState(store).pages.find(item => item.id === result?.pageId);
+      if (page && ['published', 'published_comment_error'].includes(result.status)) {
+        page.publishingHealth = { ...page.publishingHealth, lastSucceededAt: result.publishedAt };
+        page.management ||= {};
+        page.management.revision = Number(page.management.revision || 0) + 1;
+        store.save();
+      }
+      return result;
+    }
+    catch (error) {
+      const details = classifyMetaFailure(error);
+      if (details.kind === "security_restriction") {
+        const post = store.state.socialPosts.find(item => item.id === input.postId);
+        const local = store.state.socialPages.find(item => item.id === post?.pageId);
+        const page = metaState(store).pages.find(item => item.id === local?.externalId);
+        if (page) {
+          page.publishingHealth = { blocked: true, message: safeMessage(error.message, page.accessToken), details, failedAt: new Date().toISOString() };
+          page.management ||= {};
+          page.management.revision = Number(page.management.revision || 0) + 1;
+          store.save();
+        }
+      }
+      const failedPost=store.state.socialPosts.find(item=>item.id===input.postId);
+      if(failedPost && !failedPost.warehouse && failedPost.automationStatus!=='publishing' && !details.retryable && !publishedVideo(store,failedPost)){
+        Object.assign(failedPost,{automationError:safeMessage(error.message),automationErrorDetails:details,automationAttempts:Number(failedPost.automationAttempts || 0)+1,automationBlockedReason:details.kind});
+        returnPostToWarehouse(store,failedPost,{automatic:true});store.save();
+      }
+      throw error;
+    }
+  };
+
   app.post("/api/meta/publish/reel", async (req, res) => {
     const postId = z.string().uuid().parse(req.body?.postId);
     const idempotencyKey = z.string().trim().min(8).max(160).parse(req.body?.idempotencyKey || `${postId}:${store.require("socialPosts", postId).revision}`);
@@ -1190,7 +1258,7 @@ export function mountMetaRoutes(app, store, { client = createMetaClient(), llm =
     return publishReel({ postId: post.id, idempotencyKey: `news-auto:${post.id}:${post.revision}` });
   };
 
-  return { publishReel, autoPublishNews };
+  return { publishReel, autoPublishNews, close: management.close };
 }
 
 export { publicMeta, postPreflight };

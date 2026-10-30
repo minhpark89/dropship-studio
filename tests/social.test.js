@@ -169,6 +169,21 @@ test("Meta Pages sync into local channels and a Page group schedules warehouse p
   assert.equal(Date.parse(scheduled.scheduled[1].scheduledAt) - Date.parse(scheduled.scheduled[0].scheduledAt), 600_000);
 });
 
+test("an explicit publish-now action resets a retry hold without changing the post content", async () => {
+  const { request, store, project, media } = await fixture();
+  const page = store.add("socialPages", { name: "Retry QA", platform: "facebook", externalId: "123456", archived: false, revision: 1 });
+  const post = store.add("socialPosts", { projectId: project.id, pageId: page.id, title: "Preserved title", caption: "Preserved caption", firstComment: "Preserved comment", mediaIds: [media.id], status: "draft", revision: 1, automationRetryBlocked: true, automationBlockedReason: "security_restriction", automationError: "Restricted", automationErrorDetails: { code: 368 }, automationAttempts: 1 });
+  const response = await request(`/api/social/posts/${post.id}/publish-now`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: 1 }) });
+  assert.equal(response.status, 200);
+  const result = await json(response);
+  assert.equal(result.automationRetryBlocked, false);
+  assert.equal(result.automationErrorDetails, null);
+  assert.equal(result.automationAttempts, 0);
+  assert.equal(result.caption, "Preserved caption");
+  assert.equal(result.status, "scheduled");
+  assert.equal(result.id, post.id);
+});
+
 test("an enabled Page group materializes Meta Pages and schedules drafts without manual Page binding", async () => {
   const { store, project, media } = await fixture();
   const now = new Date(Date.now() + 120_000);

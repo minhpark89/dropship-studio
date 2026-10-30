@@ -8,12 +8,15 @@ let window;
 let splash;
 let closing = false;
 
-const splashHtml = (version) => `<!doctype html><html><head><meta charset="utf-8"><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{display:grid;place-items:center;background:#101416;color:#f3f7f5;font:14px "Segoe UI Variable","Segoe UI",sans-serif;-webkit-app-region:drag}.card{width:100%;height:100%;display:grid;place-items:center;text-align:center;padding:32px}.mark{width:54px;height:54px;border:1px solid #ffb27b;border-radius:16px;display:grid;place-items:center;margin:0 auto 18px;background:linear-gradient(145deg,#4a3026,#1f2025);box-shadow:0 8px 30px #0005}.mark:before{content:"";width:22px;height:22px;border-radius:7px;background:#ffc28e;box-shadow:8px -7px 0 -3px #ef8650}.name{font-size:21px;font-weight:700;letter-spacing:.03em}.name span{display:block;color:#ffc18b;font-size:10px;letter-spacing:.2em;margin-top:4px}.status{margin-top:23px;color:#b5c4be;font-size:12px}.bar{height:3px;width:180px;margin:10px auto 0;background:#3d2b29;border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;width:38%;background:#ffad73;border-radius:3px;animation:load 1.2s ease-in-out infinite}@keyframes load{0%{transform:translateX(-130%)}100%{transform:translateX(480%)}}.version{position:absolute;bottom:16px;color:#71847d;font-size:11px;letter-spacing:.08em}</style></head><body><div class="card"><div><div class="mark"></div><div class="name">Viral<span>STUDIO</span></div><div class="status" id="status">Starting local workspace...</div><div class="bar"><i></i></div></div></div><div class="version">v${version}</div></body></html>`;
+const splashHtml = (version) => `<!doctype html><html><head><meta charset="utf-8"><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{display:grid;place-items:center;background:#101416;color:#f3f7f5;font:14px "Segoe UI Variable","Segoe UI",sans-serif;-webkit-app-region:drag}.card{width:100%;height:100%;display:grid;place-items:center;text-align:center;padding:32px}.mark{width:54px;height:54px;border:1px solid #ffb27b;border-radius:16px;display:grid;place-items:center;margin:0 auto 18px;background:linear-gradient(145deg,#4a3026,#1f2025);box-shadow:0 8px 30px #0005}.mark:before{content:"";width:22px;height:22px;border-radius:7px;background:#ffc28e;box-shadow:8px -7px 0 -3px #ef8650}.name{font-size:21px;font-weight:700;letter-spacing:.03em}.name span{display:block;color:#ffc18b;font-size:10px;letter-spacing:.2em;margin-top:4px}.status{margin-top:23px;color:#b5c4be;font-size:12px}.bar{height:3px;width:180px;margin:10px auto 0;background:#3d2b29;border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;width:38%;background:#ffad73;border-radius:3px;animation:load 1.2s ease-in-out infinite}@keyframes load{0%{transform:translateX(-130%)}100%{transform:translateX(480%)}}.version{position:absolute;bottom:16px;color:#71847d;font-size:11px;letter-spacing:.08em}</style></head><body><div class="card"><div><div class="mark"></div><div class="name">Viral<span>STUDIO</span></div><div class="status" id="status">Đang mở Viral Studio…</div><div class="bar"><i></i></div></div></div><div class="version">v${version}</div></body></html>`;
 
-function createSplash() {
-  splash = new BrowserWindow({ width: 460, height: 300, frame: false, resizable: false, movable: true, show: true, center: true, title: `Viral Studio v${app.getVersion()}`, backgroundColor: "#101416", webPreferences: { sandbox: true } });
+async function createSplash() {
+  splash = new BrowserWindow({ width: 460, height: 300, frame: false, resizable: false, movable: true, show: false, center: true, title: `Viral Studio v${app.getVersion()}`, backgroundColor: "#101416", webPreferences: { sandbox: true } });
   splash.setMenuBarVisibility(false);
-  splash.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml(app.getVersion()))}`);
+  const firstPaint = new Promise(resolve=>splash.once('ready-to-show',resolve));
+  await splash.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml(app.getVersion()))}`);
+  await firstPaint;
+  if(!splash?.isDestroyed())splash.show();
 }
 
 function setSplashStatus(status) {
@@ -46,8 +49,8 @@ app
   .then(async () => {
     if (!locked) return;
     app.setAppUserModelId("local.viral.studio");
-    createSplash();
-    setSplashStatus("Preparing local workspace...");
+    await createSplash();
+    setSplashStatus("Đang chuẩn bị dữ liệu…");
     const { startServer } = await import(
       pathToFileURL(path.join(__dirname, "../server/index.js")).href
     );
@@ -81,11 +84,11 @@ app
                 ? commonInstalledViralData
                 : preferredData)
       : path.join(__dirname, "../.studio"));
-    setSplashStatus("Checking the local server...");
+    setSplashStatus("Đang kiểm tra kết nối…");
     let existing = await findInstance(directory);
     if (!existing) {
       try {
-        setSplashStatus("Starting local server...");
+        setSplashStatus("Đang khởi động ứng dụng…");
         studio = await startServer({
           port: 0,
           dataDir: directory,
@@ -104,7 +107,7 @@ app
         close: async () => {},
       };
     }
-    setSplashStatus("Opening Viral Studio...");
+    setSplashStatus("Đang tải giao diện…");
     window = new BrowserWindow({
       width: 1440,
       height: 950,
@@ -134,7 +137,7 @@ app
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (
-        /^https:\/\/(?:www\.)?(?:dola\.com|flow\.google\.com)(?:\/|$)/.test(url)
+        /^https:\/\/(?:www\.|m\.)?(?:dola\.com|flow\.google\.com|facebook\.com)(?:\/|$)/.test(url)
       )
         shell.openExternal(url);
       return { action: "deny" };
@@ -181,10 +184,16 @@ app
         },
       ]),
     );
-    window.once("ready-to-show", () => {
-      window.show();
-      closeSplash();
+    let painted=false,uiReady=false;
+    const reveal=()=>{
+      if(!painted || !uiReady || window.isDestroyed() || closing)return;
+      window.show();closeSplash();
+    };
+    ipcMain.on('studio:ui-ready',(event)=>{
+      if(event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || new URL(event.senderFrame.url).origin!==new URL(studio.address).origin)return;
+      uiReady=true;reveal();
     });
+    window.once('ready-to-show',()=>{painted=true;reveal();});
     await window.loadURL(studio.address);
   })
   .catch((error) => {

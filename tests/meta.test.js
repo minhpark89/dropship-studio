@@ -345,10 +345,11 @@ test("Meta Reel publish is explicit and idempotent after preflight", async () =>
   }
 });
 
-test("Meta keeps a Reel in the queue when first comment fails and retries only the comment", async () => {
+for (const manualRetry of [false, true]) test(`Meta retries only the failed comment ${manualRetry ? "after publish-now changes the revision" : "with the original key"}`, async () => {
   const { default: express } = await import("express");
   const { Store } = await import("../server/store.js");
   const { mountMetaRoutes } = await import("../server/meta.js");
+  const { mountSocialRoutes } = await import("../server/social.js");
   const { default: fs } = await import("node:fs/promises");
   const { default: path } = await import("node:path");
   const { randomUUID } = await import("node:crypto");
@@ -365,6 +366,7 @@ test("Meta keeps a Reel in the queue when first comment fails and retries only t
   let commentAttempts = 0;
   const app = express();
   app.use(express.json());
+  mountSocialRoutes(app, store);
   mountMetaRoutes(app, store, { client: {
     me: async () => ({ id: "42", name: "Owner" }),
     pages: async () => ({ data: [{ id: "321", name: "Page", access_token: "page-token" }] }),
@@ -390,7 +392,18 @@ test("Meta keeps a Reel in the queue when first comment fails and retries only t
     assert.equal(store.state.media.some((item) => item.id === media.id), true);
     assert.equal(await fs.access(mediaFile).then(() => true, () => false), true);
     assert.equal(store.state.socialPosts[0].automationError, "Graph comment failed");
-    const second = await jsonRequest("/api/meta/publish/reel", { postId: post.id, idempotencyKey: "comment-retry-123" });
+    let retryKey = "comment-retry-123";
+    if (manualRetry) {
+      Object.assign(post, { automationRetryBlocked: true, automationAttempts: 3, automationBlockedReason: "retry_exhausted" });
+      store.save();
+      const retry = await jsonRequest(`/api/social/posts/${post.id}/publish-now`, { revision: post.revision });
+      assert.equal(retry.status, 200);
+      const queued = await retry.json();
+      assert.equal(queued.automationRetryBlocked, false);
+      assert.equal(queued.revision, 2);
+      retryKey = `schedule:${post.id}:${queued.revision}`;
+    }
+    const second = await jsonRequest("/api/meta/publish/reel", { postId: post.id, idempotencyKey: retryKey });
     assert.equal(second.status, 200);
     const secondBody = await second.json();
     assert.equal(secondBody.status, "published");
@@ -400,6 +413,8 @@ test("Meta keeps a Reel in the queue when first comment fails and retries only t
     assert.equal(store.state.socialPosts.some((item) => item.id === post.id), false);
     assert.equal(store.state.media.some((item) => item.id === media.id), false);
     assert.equal(await fs.access(mediaFile).then(() => true, () => false), false);
+    assert.equal(store.state.settings.meta.publications.length, 1);
+    assert.equal(store.state.settings.meta.publications[0].idempotencyKey, "comment-retry-123");
     assert.deepEqual(calls, ["start", "upload", "finish", "comment", "comment"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));

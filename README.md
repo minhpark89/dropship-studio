@@ -4,14 +4,19 @@ Viral Studio is a Windows desktop app for research, AI video production, timelin
 
 ## Download for Windows
 
-- Portable v0.7.0: `release/Viral Studio 0.7.0.exe`
-- Installer v0.7.0: `release/Viral Studio Setup 0.7.0.exe`
+- [Portable v0.7.2](https://github.com/minhpark89/viral-studio/releases/download/v0.7.2/Viral.Studio.0.7.2.exe)
+- [Installer v0.7.2](https://github.com/minhpark89/viral-studio/releases/download/v0.7.2/Viral.Studio.Setup.0.7.2.exe)
 - SHA-256 checksums: `release/SHA256SUMS.txt`
 
 The desktop app starts with a version/loading screen, uses the Viral Studio icon, and stores user data in `Viral Data`; an installed upgrade can read legacy `Dropship Data` automatically.
 
 ## Included features
 
+- Page and post managers include filters, pagination, selection across all matching results, bulk previews and CSV export. Page review groups, notes, reminders, read-only checks, token/CSV/JSON imports and recoverable trash support large collections.
+- Posts that cannot be retried safely return to the Content warehouse with their video and content intact. Reassign a Page to reuse them. A returned or edited draft stays on hold until explicitly approved or scheduled.
+- Select multiple posts and use **Sửa … bài đã chọn** to edit each post or apply one field to all selected posts. Details can navigate the selection; stale and busy rows are skipped with reasons.
+- Successful Reel and first-comment publication removes the draft from the queue and cleans its unreferenced local video. Publication history and the Facebook link remain under **Lịch sử đã đăng** to prevent duplicates. A comment-only failure reuses the existing Reel.
+- The desktop splash and main window remain hidden until their content is painted; the main interface waits for initial data before appearing.
 - Batch production: choose News or Product, research a niche or supply a product, and create 1–50 independent videos. Each video keeps its source context for Content.
 - Content uses the saved LLM to write complete English news articles, or short product first comments with the configured store link. News articles are included as `article.md` in handoff exports; drafts can be saved before assigning a Page.
 - Bundled Inter font works offline, and the app shows its actual package version in the top bar and sidebar.
@@ -52,6 +57,6 @@ Build outputs are written to `release/`. The installer and portable executable u
 
 ## Repository
 
-This repository is the dedicated Viral Studio project. The current verified local build is v0.7.0. The GitHub repository is `minhpark89/viral-studio`.
+This repository is the dedicated Viral Studio project. The current release is v0.7.2. The GitHub repository is `minhpark89/viral-studio`. See `CHECKPOINT_2026-10-30_v0.7.2.md` for implementation and verification details.
 
 

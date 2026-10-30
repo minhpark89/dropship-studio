@@ -119,6 +119,7 @@ function contentCoverageKey(value, research) {
 }
 
 function postWorkflowStage(post) {
+  if(post.warehouse?.returnedAt)return "returned";
   if (post.contentType === "news") {
     if (!post.articleBody?.trim()) return "needs-content";
     if (post.website?.status !== "published" || !post.website.url) return "needs-website";
@@ -129,6 +130,7 @@ function postWorkflowStage(post) {
 }
 
 const workflowStageLabels = {
+  returned: "Đã trả về kho",
   "needs-content": "Chưa có Content",
   "needs-website": "Chưa đăng website",
   "needs-comment": "Thiếu first comment",
@@ -151,7 +153,7 @@ export function ContentPage({ data, project, notify, navigate }) {
 
   useEffect(() => {
     setPages(data.socialPages || []);
-    setPosts(data.socialPosts || []);
+    setPosts((data.socialPosts || []).filter(p=>!p.deletedAt && !p.archivedAt && p.status!=="published"));
   }, [data.socialPages, data.socialPosts]);
 
   useEffect(() => {
@@ -172,7 +174,7 @@ export function ContentPage({ data, project, notify, navigate }) {
       coverage.set(key, (coverage.get(key) || 0) + 1);
     }
     return renderedVideos.filter((video) => {
-      if (posts.some((post) => post.mediaIds?.includes(video.id))) return false;
+      if (video.metaPublishedAt || posts.some((post) => post.mediaIds?.includes(video.id))) return false;
       const key = contentCoverageKey(video, projectResearch);
       const available = coverage.get(key) || 0;
       if (available > 0) {
@@ -202,6 +204,7 @@ export function ContentPage({ data, project, notify, navigate }) {
     .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
   const projectPostItems = posts.filter((post) => post.projectId === project.id);
   const counts = {
+    returned:projectPostItems.filter(p=>p.warehouse?.returnedAt).length,
     all: projectPostItems.length,
     news: projectPostItems.filter((post) => post.contentType === "news").length,
     product: projectPostItems.filter((post) => post.contentType === "product").length,
@@ -430,7 +433,7 @@ export function ContentPage({ data, project, notify, navigate }) {
     <div className="page-heading hub-heading"><div><div className="eyebrow">CONTENT WORKSPACE</div><h1>Content tách riêng, quản lý nhẹ hơn.</h1><p>Soạn caption, first comment và link bài viết rồi gắn đúng Page trước khi duyệt.</p></div><div className="hub-heading-actions"><Button onClick={() => openCreate("news")}><Newspaper size={15} /> Content News</Button><Button variant="primary" onClick={() => openCreate("product")}><Plus size={16} /> Content Product</Button></div></div><div className="hub-metrics"><div><span>Tổng Content</span><strong>{counts.all}</strong><small>trong project hiện tại</small></div><div><span>News</span><strong>{counts.news}</strong><small>research → video → website</small></div><div><span>Product</span><strong>{counts.product}</strong><small>video sản phẩm</small></div><div><span>Đủ điều kiện</span><strong>{counts.ready}</strong><small>website + first comment</small></div></div>
     {!activePages.length && <Notice>You can write and save drafts now. Assign a Page before approval. <button className="inline-link" onClick={() => navigate?.("pages")}>Open Channels</button></Notice>}
         {unassignedVideoGroups.length > 0 && <section className="content-video-inbox"><div className="hub-panel-heading"><div><span className="hub-kicker">READY FROM RENDER</span><h2>{unassignedVideoGroups.length} video group(s) cần tạo Content</h2><p>News sẽ tạo bài, đăng website và gắn URL chính xác vào first comment.</p></div></div>{unassignedVideoGroups.map(({ video, type, count }) => <article key={video.id}><Video size={24}/><div><strong>{video.production?.title || video.name}</strong><p>{type === "news" ? `News · bài viết website + first comment${count > 1 ? ` · ${count} bản render` : ""}` : `Product · first comment${count > 1 ? ` · ${count} bản render` : ""}`}</p></div><Button variant="primary" busy={busy===`write:${video.id}` || busy===`website:${video.id}`} disabled={Boolean(busy)} onClick={()=>writeForVideo(video)}><Sparkles size={15}/>{type === "news" ? "Tạo bài + đăng website" : "Tạo first comment"}</Button></article>)}</section>}
-    <div className="content-toolbar"><div className="content-filter-tabs">{[["all", "Tất cả"], ["news", "News"], ["product", "Product"], ["needs-content", "Cần viết"], ["needs-website", "Cần đăng web"], ["needs-comment", "Thiếu first comment"], ["ready", "Đủ điều kiện"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}<b>{counts[value]}</b></button>)}</div><input aria-label="Tìm Content" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm tiêu đề, caption hoặc first comment…" /></div>
+    <div className="content-toolbar"><div className="content-filter-tabs">{[["all", "Tất cả"], ["returned", "Đã trả về kho"], ["news", "News"], ["product", "Product"], ["needs-content", "Cần viết"], ["needs-website", "Cần đăng web"], ["needs-comment", "Thiếu first comment"], ["ready", "Đủ điều kiện"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}<b>{counts[value]}</b></button>)}</div><input aria-label="Tìm Content" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm tiêu đề, caption hoặc first comment…" /></div>
     {filter === "needs-website" && projectPosts.length > 0 && <div className="content-bulk-controls"><label htmlFor="content-llm-concurrency">LLM threads<select id="content-llm-concurrency" value={bulkConcurrency} onChange={(event) => setBulkConcurrency(Number(event.target.value))} disabled={Boolean(busy)}>{[1, 2, 3, 4, 5, 6, 7, 8].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>{bulkProgress && <div className="content-bulk-progress"><strong>LLM {bulkProgress.completed}/{bulkProgress.total}</strong><span>{bulkProgress.active} running | {bulkProgress.succeeded} ok | {bulkProgress.failed} failed | {bulkProgress.concurrency} threads</span><progress max={bulkProgress.total} value={bulkProgress.completed} /></div>}</div>}
     {filter === "needs-website" && projectPosts.length > 0 && <div className="content-bulk-toolbar"><label className="content-select-toggle"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} /> <span>Select all {projectPosts.length} items</span></label><span className="content-bulk-hint">{selectedPosts.length ? `Selected ${selectedPosts.length} items` : "No selection = process all filtered News items"}</span><div className="content-bulk-actions"><Button busy={busy === "bulk-regenerate"} disabled={Boolean(busy)} onClick={bulkRegenerate}><Sparkles size={14} /> Regenerate LLM {selectedPosts.length ? `(${selectedPosts.length})` : "all"}</Button><Button variant="primary" busy={busy === "bulk-website"} disabled={Boolean(busy)} onClick={bulkPublishWebsite}><Send size={14} /> Publish website {selectedPosts.length ? `(${selectedPosts.length})` : "all"}</Button></div></div>}
     {projectPosts.length ? <div className="content-list">{projectPosts.map((post) => {
@@ -446,7 +449,7 @@ export function ContentPage({ data, project, notify, navigate }) {
           {post.firstComment && <div className="first-comment-preview"><MessageCircle size={14} /><span><strong>First comment</strong>{post.firstComment}</span></div>}
           {post.articleBody && <details className="content-article"><summary>Full article · {post.articleBody.split(/\s+/).length} words · {articleImageCount} image{articleImageCount === 1 ? "" : "s"}</summary><pre>{post.articleBody}</pre><Button onClick={()=>navigator.clipboard.writeText(post.articleBody).then(()=>notify("Article copied.")).catch(()=>notify("Could not copy the article.","error"))}><Copy size={14}/> Copy article</Button></details>}
           {post.articleBody && <div className="production-actions">{post.website?.status === "published" ? <><a className="inline-link" href={post.website.url} target="_blank" rel="noreferrer">Mở bài website</a>{post.website.contentChanged && <Button variant="primary" busy={busy === `website:${post.id}`} disabled={Boolean(busy)} onClick={() => publishWebsite(post, true)}><Send size={14} /> Đăng bản cập nhật</Button>}{articleImageCount < 3 && <Button busy={busy === `repair-images:${post.id}`} disabled={Boolean(busy)} onClick={() => repairImages(post)}><RefreshCw size={14} /> Bổ sung ảnh bài viết</Button>}{postWorkflowStage(post) === "needs-comment" && <Button busy={busy === `sync-comment:${post.id}`} disabled={Boolean(busy)} onClick={() => syncFirstComment(post)}><Link2 size={14} /> Gắn first comment</Button>}</> : <Button variant="primary" busy={busy === `website:${post.id}`} disabled={Boolean(busy)} onClick={() => publishWebsite(post)}><Send size={14} /> Đăng bài News lên website</Button>}</div>}
-          <div className="content-card-actions">{postWorkflowStage(post) === "needs-content" && <Button variant="primary" busy={busy === `regenerate:${post.id}`} disabled={Boolean(busy)} onClick={() => regeneratePost(post)}><Sparkles size={14} /> Tạo lại bài News</Button>}<Button onClick={() => setModal({ mode: "edit", post })}><Pencil size={14} /> Sửa</Button>{post.status === "draft" && <Button variant="primary" onClick={() => updatePost(post, { status: "ready" }, "Đã duyệt Content.")}><Check size={14} /> Duyệt</Button>}{["ready", "scheduled"].includes(post.status) && <Button onClick={() => exportPost(post)}><FileDown size={14} /> Handoff</Button>}<Button onClick={() => duplicate(post)}><Copy size={14} /> Nhân bản</Button><Button className="danger-text" onClick={() => remove(post)}><Trash2 size={14} /></Button></div>
+          {post.warehouse?.returnedAt&&<Notice>Đã trả về kho từ {post.warehouse.previousPageName || "lịch đăng"}. Video và nội dung được giữ; chọn Page khác trong Page &amp; bài đăng để sử dụng lại.</Notice>}<div className="content-card-actions">{postWorkflowStage(post) === "needs-content" && <Button variant="primary" busy={busy === `regenerate:${post.id}`} disabled={Boolean(busy)} onClick={() => regeneratePost(post)}><Sparkles size={14} /> Tạo lại bài News</Button>}<Button onClick={() => setModal({ mode: "edit", post })}><Pencil size={14} /> Sửa</Button>{post.warehouse?.returnedAt&&<Button onClick={()=>navigate("social")}>Chọn Page để dùng lại</Button>}{post.status === "draft" && !post.warehouse?.returnedAt && <Button variant="primary" onClick={() => updatePost(post, { status: "ready" }, "Đã duyệt Content.")}><Check size={14} /> Duyệt</Button>}{["ready", "scheduled"].includes(post.status) && <Button onClick={() => exportPost(post)}><FileDown size={14} /> Handoff</Button>}<Button onClick={() => duplicate(post)}><Copy size={14} /> Nhân bản</Button><Button className="danger-text" onClick={() => remove(post)}><Trash2 size={14} /></Button></div>
         </div>
       </article>;
     })}</div> : <Empty icon={Newspaper} title="Chưa có Content trong project này">Bắt đầu bằng một bản News từ research hoặc một bản Product từ Product Studio.</Empty>}

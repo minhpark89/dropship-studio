@@ -1,6 +1,6 @@
 {
   "name": "viral-studio",
-  "version": "0.7.0",
+  "version": "0.7.2",
   "private": true,
   "license": "UNLICENSED",
   "author": "Viral Studio",
@@ -78,10 +78,10 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Viral Studio",
-      "artifactName": "Viral Studio Setup ${version}.${ext}"
+      "artifactName": "Viral.Studio.Setup.${version}.${ext}"
     },
     "portable": {
-      "artifactName": "Viral Studio ${version}.${ext}"
+      "artifactName": "Viral.Studio.${version}.${ext}"
     }
   }
 }

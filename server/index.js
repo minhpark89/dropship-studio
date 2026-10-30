@@ -737,6 +737,7 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
       for (const stream of streams) stream.end();
       clearTimeout(changeTimer);
       await socialScheduler.close();
+      await metaService.close();
       await production.close();
       await queue.close();
       dreamfaceSetup.stop();

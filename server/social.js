@@ -11,6 +11,8 @@ import {
 } from "../shared/social-contracts.js";
 import { createPostPackage, packageFilePath, validatePackageFileName } from "./social-package.js";
 import { isPublishableVideo } from "../shared/output-media.js";
+import { managedPageUnavailable } from "../shared/management.js";
+import { publishedVideo } from './post-lifecycle.js';
 
 const mediaKinds = new Set(["image", "video"]);
 
@@ -219,7 +221,8 @@ function nextGroupScheduleStart(group, startAt, nowValue = Date.now()) {
 export function schedulePostsForGroup(store, groupId, { postIds = [], startAt = null, staggerMinutes, tokenGroupId = "" } = {}) {
   const group = (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === String(groupId));
   if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
-  const pageIds = [...new Set((group.pageIds || []).map(String))];
+  if (group.purpose === 'review' || group.id.startsWith('pgrp_hold_')) throw new StudioError('Nhóm chờ xử lý không dùng để đăng bài.', 'GROUP_ON_HOLD', 409);
+  const pageIds = [...new Set((group.pageIds || []).map(String))].filter(id => !managedPageUnavailable(store.state.settings.meta.pages?.find(page => String(page.id) === id), store.state.socialPages.find(page => String(page.externalId) === id)));
   if (!pageIds.length) throw new StudioError("Nhóm Page đang trống.", "GROUP_PAGES_EMPTY", 409);
   ensureLocalPagesForGroup(store, pageIds);
   const localPages = pageIds.map((id) => store.state.socialPages.find((page) => String(page.externalId) === id && !page.archived)).filter(Boolean);
@@ -243,12 +246,17 @@ export function schedulePostsForGroup(store, groupId, { postIds = [], startAt = 
       pageId: page.id,
       pageGroupId: String(group.id),
       ...(selectedTokenGroup ? { tokenGroupId: selectedTokenGroup } : {}),
+      warehouse: null,
+      automationHold: false,
       status: "scheduled",
       scheduledAt: new Date(start + index * spacing * 60_000).toISOString(),
       automationStatus: null,
       automationError: null,
       automationAttempts: 0,
       automationNextAttemptAt: null,
+      automationRetryBlocked: false,
+      automationBlockedReason: null,
+      automationErrorDetails: null,
     };
     validatePostPayload(store, { ...post, ...changes }, { existing: post, reapprove: true });
     return { post, page, changes };
@@ -286,8 +294,9 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   const group = (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === String(groupId));
   if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
   const config = normalizeScheduleConfig(group.scheduleConfig);
-  if (!config.enabled || !config.autoPublish || !config.times.length) return { group, scheduled: [] };
-  const pageIds = [...new Set((group.pageIds || []).map(String))];
+  if (!config.enabled || !config.autoPublish || !config.times.length || group.purpose === 'review' || group.id.startsWith('pgrp_hold_')) return { group, scheduled: [] };
+  const pageIds = [...new Set((group.pageIds || []).map(String))].filter(id => !managedPageUnavailable(store.state.settings.meta.pages?.find(page => String(page.id) === id), store.state.socialPages.find(page => String(page.externalId) === id)));
+  if (!pageIds.length) return { group, scheduled: [] };
   ensureLocalPagesForGroup(store, pageIds);
   const localPages = pageIds.map((id) => store.state.socialPages.find((page) => String(page.externalId) === id && !page.archived)).filter(Boolean);
   if (localPages.length !== pageIds.length) return { group, scheduled: [] };
@@ -295,7 +304,7 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   const today = localScheduleKey(Date.now(), config.timezone);
   const existingToday = (store.state.socialPosts || []).filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.scheduledAt && localScheduleKey(post.scheduledAt, config.timezone) === today).length;
   const futureAutoPosts = (store.state.socialPosts || [])
-    .filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && post.automationSource === "daily-automation" && post.scheduledAt && Date.parse(post.scheduledAt) > Date.now())
+    .filter((post) => post.pageGroupId === group.id && post.status === "scheduled" && !post.automationRetryBlocked && post.automationSource === "daily-automation" && post.scheduledAt && Date.parse(post.scheduledAt) > Date.now())
     .sort((left, right) => Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt));
   if (futureAutoPosts.length) {
     const expectedSlots = nextGroupSlots(group, new Set(), futureAutoPosts.length);
@@ -318,7 +327,7 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
   if (!capacity) return { group, scheduled: [] };
   const candidates = (store.state.socialPosts || [])
     .filter((post) => {
-      if (!["draft", "ready"].includes(post.status) || post.pageGroupId || !post.mediaIds?.length) return false;
+      if (!["draft", "ready"].includes(post.status) || post.pageGroupId || !post.mediaIds?.length || post.archivedAt || post.deletedAt || post.warehouse?.returnedAt || post.automationHold) return false;
       if (post.automationError) return false;
       if (!String(post.firstComment || "").trim()) return false;
       const media = store.state.media.find((item) => item.id === post.mediaIds[0]);
@@ -353,6 +362,9 @@ export function autoScheduleWarehousePosts(store, groupId, { limit, tokenGroupId
       automationError: null,
       automationAttempts: 0,
       automationNextAttemptAt: null,
+      automationRetryBlocked: false,
+      automationBlockedReason: null,
+      automationErrorDetails: null,
     };
     validatePostPayload(store, { ...post, ...changes }, { existing: post, reapprove: true });
     Object.assign(post, changes, { revision: Number(post.revision || 1) + 1, updatedAt: now() });
@@ -423,6 +435,7 @@ export function mountSocialRoutes(app, store) {
   app.post(["/api/social/groups/:id/automation", "/api/social/page-groups/:id/automation"], (req, res) => {
     const group = (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === String(req.params.id));
     if (!group) throw new StudioError("Không tìm thấy nhóm Page.", "META_PAGE_GROUP_NOT_FOUND", 404);
+    if (group.purpose === 'review' || group.id.startsWith('pgrp_hold_')) throw new StudioError('Nhóm chờ xử lý luôn tắt Auto Post.', 'GROUP_ON_HOLD', 409);
     group.scheduleConfig = normalizeScheduleConfig(req.body?.scheduleConfig || req.body || {}, group.scheduleConfig || {});
     group.updatedAt = now();
     store.save();
@@ -434,6 +447,7 @@ export function mountSocialRoutes(app, store) {
     const revision = z.number().int().positive().parse(req.body?.revision);
     assertRevision(post, revision);
     if (post.status === "published") throw new StudioError("Bài đã đăng không thể đăng lại.", "IMMUTABLE_PUBLISHED", 409);
+    if (post.deletedAt || post.archivedAt) throw new StudioError('Khôi phục bài trước khi đăng.', 'POST_ON_HOLD', 409);
     const requestedGroupId = String(req.body?.pageGroupId || req.body?.groupId || post.pageGroupId || "");
     const group = requestedGroupId ? (store.state.settings?.meta?.pageGroups || []).find((item) => item.id === requestedGroupId) : null;
     if (group?.pageIds?.length) ensureLocalPagesForGroup(store, group.pageIds);
@@ -450,11 +464,16 @@ export function mountSocialRoutes(app, store) {
       ...(req.body?.tokenGroupId ? { tokenGroupId: String(req.body.tokenGroupId) } : {}),
       status: "scheduled",
       scheduledAt: new Date(Date.now() + 3_000).toISOString(),
+      warehouse: null,
+      automationHold: false,
       automationSource: "manual-now",
       automationStatus: null,
       automationError: null,
       automationAttempts: 0,
       automationNextAttemptAt: null,
+      automationRetryBlocked: false,
+      automationBlockedReason: null,
+      automationErrorDetails: null,
     };
     validatePostPayload(store, { ...post, ...changes }, { existing: post, reapprove: true });
     Object.assign(post, changes, { revision: revision + 1, updatedAt: now() });
@@ -496,14 +515,17 @@ export function mountSocialRoutes(app, store) {
     const input = stripPatchDefaults(socialPostPatchSchema.parse(req.body), req.body);
     const post = store.require("socialPosts", req.params.id);
     assertRevision(post, input.revision);
+    if (post.automationStatus === "publishing") throw new StudioError("Bài đang đăng; chờ tác vụ kết thúc.", "POST_BUSY", 409);
     if (post.status === "published") throw new StudioError("Bài đã ghi nhận đăng và không thể sửa.", "IMMUTABLE_PUBLISHED", 409);
     const { revision, ...changes } = input;
     const contentChanged = ["caption", "articleBody", "researchId", "firstComment", "linkUrl", "linkLabel", "sourceUrl", "coverImageUrl", "contentType", "mediaIds", "pageId", "title"].some((key) => changes[key] !== undefined && JSON.stringify(changes[key]) !== JSON.stringify(post[key]));
+    if(publishedVideo(store,post) && Object.entries(changes).some(([key,value])=>!['firstComment','notes','status','scheduledAt'].includes(key) && JSON.stringify(value)!==JSON.stringify(post[key])))throw new StudioError('Video đã đăng; chỉ sửa bình luận chưa gửi hoặc ghi chú.','ALREADY_PUBLISHED',409);
     const explicitlyReapproved = contentChanged && (changes.status === "ready" || changes.status === "scheduled");
     if (contentChanged && !explicitlyReapproved) {
       changes.status = "draft";
       changes.scheduledAt = null;
     }
+    if(changes.status==="ready" || changes.status==="scheduled"){changes.automationHold=false;changes.warehouse=null;}
     validatePostPayload(store, { ...post, ...changes }, { existing: post, reapprove: explicitlyReapproved });
     Object.assign(post, changes, { revision: revision + 1, updatedAt: now() });
     store.save();

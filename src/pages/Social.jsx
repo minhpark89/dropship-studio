@@ -119,6 +119,7 @@ function MediaChoice({ media, selected, onChange }) {
 }
 
 export function SocialPage({ data, project, run, notify }) {
+  const [legacyEditor, setLegacyEditor] = useState(false);
   const [pages, setPages] = useState(data.socialPages || []);
   const [posts, setPosts] = useState(data.socialPosts || []);
   const [selectedPageId, setSelectedPageId] = useState((data.socialPages || [])[0]?.id || "");
@@ -427,8 +428,10 @@ export function SocialPage({ data, project, run, notify }) {
     }
   };
 
+  if (!legacyEditor) return <div className="page social-page management-post-page"><div className="page-heading"><div><div className="eyebrow">BÀI ĐĂNG</div><h1>Theo dõi và xử lý bài đăng.</h1></div><Button onClick={() => setLegacyEditor(true)}><Pencil size={14}/>Soạn bài thủ công</Button></div><DistributionPanel data={data} notify={notify} projectId={project.id}/></div>;
   return (
     <div className="page social-page">
+      <Button onClick={() => setLegacyEditor(false)}>← Về quản lý bài đăng</Button>
       <div className="page-heading">
         <div>
           <div className="eyebrow">PAGE &amp; CONTENT</div>

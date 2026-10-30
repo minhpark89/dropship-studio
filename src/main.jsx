@@ -91,6 +91,7 @@ const pages = {
 
 function App() {
   const [data, setData] = useState(null);
+  const [startupError,setStartupError]=useState('');
   const [selected, setSelected] = useState(
     localStorage.getItem("studio-project") || "",
   );
@@ -121,7 +122,7 @@ function App() {
   useEffect(() => {
     api("/state")
       .then(setData)
-      .catch((error) => notify(error.message, "error"));
+      .catch((error) => {setStartupError(error.message);notify(error.message, "error");});
     const events = new EventSource("/api/events");
     events.onmessage = (event) => {
       try {
@@ -136,6 +137,12 @@ function App() {
     events.onerror = () => setConnection(false);
     return () => events.close();
   }, [notify]);
+  useEffect(()=>{
+    if(!data && !startupError)return;
+    let second;
+    const first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>window.studioDesktop?.ready?.());});
+    return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};
+  },[Boolean(data),startupError]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(
