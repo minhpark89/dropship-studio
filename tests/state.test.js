@@ -230,6 +230,71 @@ test("DreamFace bulk account setup accepts quantity and per-profile proxies, and
   }
 });
 
+test("Bulk proxy edits cover the whole selection and reject mismatched or foreign accounts", async () => {
+  const studio = await startServer({
+    port: 0,
+    dataDir: path.resolve(".verification", `bulk-proxy-${randomUUID()}`),
+  });
+  try {
+    const created = await (await fetch(`${studio.address}/api/accounts/bulk-slots`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "dreamface", count: 2, namePrefix: "Bulk proxy" }),
+    })).json();
+    const ids = created.accounts.map((account) => account.id);
+    const call = async (body) => {
+      const response = await fetch(`${studio.address}/api/accounts/proxy-bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+
+    const shared = await call({ ids, mode: "set", proxy: "127.0.0.1:8080:user:pass" });
+    assert.equal(shared.status, 200);
+    assert.equal(shared.body.updated, 2);
+    assert.deepEqual(shared.body.accounts.map((account) => account.proxy), [
+      "http://127.0.0.1:8080",
+      "http://127.0.0.1:8080",
+    ]);
+    assert.equal(shared.body.accounts.every((account) => account.proxyAuth === true), true);
+
+    const perProfile = await call({
+      ids,
+      mode: "set",
+      proxies: ["https://127.0.0.1:9443", "socks5://127.0.0.1:1080"],
+    });
+    assert.equal(perProfile.status, 200);
+    assert.deepEqual(perProfile.body.accounts.map((account) => account.proxy), [
+      "https://127.0.0.1:9443",
+      "socks5://127.0.0.1:1080",
+    ]);
+    assert.equal(perProfile.body.accounts.every((account) => account.proxyAuth === false), true);
+
+    const cleared = await call({ ids, mode: "clear" });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.updated, 2);
+    assert.deepEqual(cleared.body.accounts.map((account) => account.proxy), ["", ""]);
+    assert.equal(cleared.body.accounts.every((account) => account.proxyAuth === false), true);
+
+    const mismatch = await call({ ids, mode: "set", proxies: ["127.0.0.1:1", "127.0.0.1:2", "127.0.0.1:3"] });
+    assert.equal(mismatch.status, 422);
+    assert.equal(mismatch.body.code, "BULK_PROXY_COUNT");
+
+    const dola = await (await fetch(`${studio.address}/api/accounts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dola", provider: "dola", loginMethod: "google" }),
+    })).json();
+    const foreign = await call({ ids: [dola.id], mode: "set", proxy: "127.0.0.1:8080" });
+    assert.equal(foreign.status, 422);
+    assert.equal(foreign.body.code, "BULK_PROXY_DREAMFACE_ONLY");
+  } finally {
+    await studio.close();
+  }
+});
+
 test("Gmail signup route is limited to DreamFace profiles", async () => {
   const studio = await startServer({
     port: 0,

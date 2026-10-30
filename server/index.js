@@ -456,9 +456,78 @@ async function createServer({ port, dataDir, host, desktop, instance }) {
     res.json(store.patch("accounts", account.id, {
       proxy: parsedProxy.server,
       proxyAuth: Boolean(parsedProxy.username),
+      proxyStatus: "",
+      proxyIp: "",
+      proxyCheckedAt: "",
       status: account.status === "ready" ? "offline" : account.status,
       message: parsedProxy.server ? "Proxy đã lưu. Hãy kiểm tra proxy trước khi render." : "Đã bỏ proxy. Hãy kiểm tra phiên trước khi render.",
     }));
+  });
+  app.post("/api/accounts/proxy-bulk", async (req, res) => {
+    const input = z.object({
+      ids: z.array(z.string().uuid()).min(1).max(100),
+      mode: z.enum(["set", "clear"]).default("set"),
+      proxy: z.string().trim().max(500).default(""),
+      proxies: z.array(z.string().trim().max(500)).max(100).default([]),
+    }).parse(req.body || {});
+    const accounts = [...new Set(input.ids)].map((id) => store.require("accounts", id));
+    if (accounts.some((account) => account.provider !== "dreamface"))
+      throw new StudioError("Gán proxy hàng loạt chỉ dành cho profile DreamFace.", "BULK_PROXY_DREAMFACE_ONLY", 422);
+    const lines = input.proxies.map((value) => value.trim()).filter(Boolean);
+    if (input.mode === "set" && !lines.length && !input.proxy)
+      throw new StudioError("Nhập ít nhất một proxy hoặc chọn Bỏ proxy.", "BULK_PROXY_EMPTY", 422);
+    if (input.mode === "set" && lines.length > 1 && lines.length !== accounts.length)
+      throw new StudioError(
+        `Đang chọn ${accounts.length} profile nhưng có ${lines.length} dòng proxy. Dùng một dòng cho tất cả hoặc đúng ${accounts.length} dòng.`,
+        "BULK_PROXY_COUNT",
+        422,
+      );
+    // Parse every line before touching a profile so one bad proxy cannot leave
+    // half of the selection updated.
+    const parsedLines = lines.map((value) => parseProxy(value));
+    const shared = input.mode === "set"
+      ? parseProxy(lines.length === 1 ? lines[0] : input.proxy)
+      : null;
+    const updated = [];
+    const skipped = [];
+    accounts.forEach((account, index) => {
+      if (["busy", "checking"].includes(account.status)) {
+        skipped.push({ id: account.id, name: account.name, reason: "Hồ sơ đang được sử dụng." });
+        return;
+      }
+      const parsed = input.mode === "clear"
+        ? { server: "", username: "" }
+        : (parsedLines.length === accounts.length ? parsedLines[index] : shared);
+      updated.push({ account, parsed });
+    });
+    let saved = 0;
+    for (const { account, parsed } of updated) {
+      try {
+        await dreamface.close(account);
+        const secrets = new SecretStore(store.root);
+        if (parsed.username)
+          secrets.set(proxySecretId(account.id), { username: parsed.username, password: parsed.password });
+        else
+          secrets.delete(proxySecretId(account.id));
+        store.patch("accounts", account.id, {
+          proxy: parsed.server,
+          proxyAuth: Boolean(parsed.username),
+          proxyStatus: "",
+          proxyIp: "",
+          proxyCheckedAt: "",
+          status: account.status === "ready" ? "offline" : account.status,
+          message: parsed.server ? "Proxy đã lưu hàng loạt. Hãy kiểm tra proxy trước khi render." : "Đã bỏ proxy. Hãy kiểm tra phiên trước khi render.",
+        });
+        saved += 1;
+      } catch (error) {
+        skipped.push({ id: account.id, name: account.name, reason: error.message });
+      }
+    }
+    res.json({
+      updated: saved,
+      skipped,
+      accounts: store.state.accounts.filter((account) => input.ids.includes(account.id)),
+    });
   });
   app.post("/api/accounts/:id/proxy-check", async (req, res) => {
     const account = store.require("accounts", req.params.id);
